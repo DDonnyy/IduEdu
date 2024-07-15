@@ -1,0 +1,69 @@
+[tool.poetry]
+name = "iduedu"
+version = "0.1.0"
+license = "BSD-3-Clause"
+description = "Small utility library containing graph algorighms used in other projects"
+authors = ["Danila <63115678+DDonnyy@users.noreply.github.com>"]
+readme = "README.md"
+
+packages = [{ include = "iduedu", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+geopandas = "^0.14.3"
+osmnx = "^1.9.1"
+tqdm = "^4.66.2"
+osm2geojson = "^0.2.4"
+pydantic = "^2.6.1"
+networkit = "^11.0"
+numpy = "^1.23.5"
+pandas = "^2.2.0"
+networkx = "^3.3"
+loguru = "^0.7.2"
+scipy = "^1.13.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.2.0"
+pylint = "^3.0.3"
+isort = "^5.13.2"
+jupyter = "^1.0.0"
+ortools = "^9.9.3963"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+target-version = ['py310']
+
+[tool.pylint.format]
+max-line-length = 120
+expected-line-ending-format = "LF"
+max-locals = 20
+extension-pkg-allow-list = ["networkit"]
+disable = [
+    "duplicate-code",
+    "missing-module-docstring",
+    "missing-function-docstring",
+]
+good-names = [
+    "G",
+    "G_ox",
+    "G_nx",
+    "G_nk",
+    "G_walk",
+    "G_drive",
+    "G_base",
+    "G_to_project",
+    "G_public_transport",
+]
+
+[tool.isort]
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+line_length = 120
+split_on_trailing_comma = true
