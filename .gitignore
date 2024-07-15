@@ -6,4 +6,3 @@ src/tests
 /.vscode
 /poetry.lock
 __pycache__
-dev
