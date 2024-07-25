@@ -10,7 +10,7 @@ packages = [{ include = "iduedu", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-geopandas = "^0.14.3"
+
 osmnx = "^1.9.1"
 tqdm = "^4.66.2"
 osm2geojson = "^0.2.4"
@@ -18,6 +18,8 @@ pydantic = "^2.6.1"
 networkit = "^11.0"
 numpy = "^1.23.5"
 pandas = "^2.2.0"
+geopandas = "^0.14.3"
+pandarallel = "^1.6.5"
 networkx = "^3.3"
 loguru = "^0.7.2"
 scipy = "^1.13.1"
