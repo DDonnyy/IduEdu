@@ -40,59 +40,71 @@ def estimate_crs_for_overpass(overpass_data):
     return CRS.from_epsg(utm_crs_list[0].code)
 
 
-def _link_unconnected(connected_ways, threshold) -> list:
+def _link_unconnected(disconnected_ways) -> list:
     # Считаем связи между линиями
-    connect_points = [point for coords in connected_ways for point in (coords[0], coords[-1])]
+    connect_points = [point for coords in disconnected_ways for point in (coords[0], coords[-1])]
     distances = cdist(connect_points, connect_points)
     n = distances.shape[0]
     mask = (np.arange(n)[:, None] // 2) == (np.arange(n) // 2)
     distances[mask] = np.inf
-    indexes = []
-    for i in range(len(connected_ways) - 1):
-        min_index = np.unravel_index(np.argmin(distances), distances.shape)
-        # if distances[min_index] > threshold:
-        #     way_inds = [way_ind for x in indexes for way_ind in (x[0] // 2, x[1] // 2)]
-        #     return _link_unconnected([way for i, way in enumerate(connected_ways) if i in way_inds], threshold)
-        distances[min_index[0], :] = np.inf
-        distances[min_index[1], :] = np.inf
-        distances[:, min_index[0]] = np.inf
-        distances[:, min_index[1]] = np.inf
-        pair_min_ind = [(x // 2) * 2 if ((x // 2) * 2 != x) else ((x // 2) * 2 + 1) for x in min_index]
-        distances[pair_min_ind[0], pair_min_ind[1]] = np.inf
-        distances[pair_min_ind[1], pair_min_ind[0]] = np.inf
-        indexes.append(min_index)
 
-    # Определяем "начальную линию"
-    way_inds = [way_ind for x in indexes for way_ind in (x[0] // 2, x[1] // 2)]
-    first = next((elem for elem in way_inds if way_inds.count(elem) == 1))
-    t = indexes.copy()
-    find_ind = first * 2, first * 2 + 1
-    new_connected_ways = None
-    connections = []
+    def relative_point(point: int):
+        rel_point = point // 2 * 2
+        return rel_point if rel_point != point else rel_point + 1
 
-    for i in range(len(connected_ways) - 1):
-        try:
-            index = next((i for i, t in enumerate(indexes) if (find_ind[0] in t or find_ind[1] in t)))
-        except Exception:
-            print(1)
-        connection = indexes.pop(index)
-        connections.append(connection)
-        if new_connected_ways is None:
-            first = next((x for x in connection if x in find_ind))
-            if first % 2 != 0:
-                new_connected_ways = connected_ways[first // 2]
-            else:
-                new_connected_ways = connected_ways[first // 2][::-1]
+    connected_ways = []
+    first_con_1, first_con_2 = np.unravel_index(np.argmin(distances), distances.shape)
+    distances[first_con_1, :] = np.inf
+    distances[first_con_2, :] = np.inf
+    distances[:, first_con_2] = np.inf
+    distances[:, first_con_1] = np.inf
+    first_con_1_rel, first_con_2_rel = [relative_point(x) for x in (first_con_1, first_con_2)]
+    distances[first_con_1_rel, first_con_2_rel] = np.inf
+    distances[first_con_2_rel, first_con_1_rel] = np.inf
+    distances[:, first_con_1_rel] = np.inf
+    distances[:, first_con_2_rel] = np.inf
 
-        next_line = next(x for x in connection if x not in find_ind)
-        find_ind = (next_line, next_line + 1) if next_line % 2 == 0 else (next_line, next_line - 1)
+    line1, line2 = first_con_1 // 2, first_con_2 // 2
 
-        if next_line % 2 == 0:
-            new_connected_ways += connected_ways[next_line // 2]
+    if first_con_1 % 2 == 1:
+        connected_ways += disconnected_ways[line1]
+    else:
+        connected_ways += disconnected_ways[line1][::-1]
+    if first_con_2 % 2 == 0:
+        connected_ways += disconnected_ways[line2]
+    else:
+        connected_ways += disconnected_ways[line2][::-1]
+
+    extreme_points = [first_con_1_rel, first_con_2_rel]
+
+    for i in range(len(disconnected_ways) - 2):
+        position, ind = np.unravel_index(np.argmin(distances[extreme_points]), (2, n))
+        next_con = (extreme_points[position], ind)
+        rel_point = relative_point(next_con[1])
+
+        line = ind // 2
+        if position == 0:
+            connected_ways = (
+                disconnected_ways[line] + connected_ways if ind % 2 == 1 else (disconnected_ways[line][::-1] + connected_ways)
+            )
+            extreme_points = [rel_point, extreme_points[1]]
         else:
+            connected_ways = (
+                connected_ways + disconnected_ways[line] if ind % 2 == 0 else (connected_ways + disconnected_ways[line][::-1])
+            )
+            extreme_points = [extreme_points[0], rel_point]
 
-            new_connected_ways += connected_ways[next_line // 2][::-1]
-    return new_connected_ways
+        # Чтоб нельзя было зациклиться
+        distances[:, rel_point] = np.inf
+        distances[next_con[0], :] = np.inf
+        distances[next_con[1], :] = np.inf
+        distances[:, next_con[0]] = np.inf
+        distances[:, next_con[1]] = np.inf
+        rel_point_2 = relative_point(next_con[0])
+        distances[rel_point, rel_point_2] = np.inf
+        distances[rel_point_2, rel_point] = np.inf
+
+    return connected_ways
 
 
 def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
@@ -160,7 +172,7 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
             to_del = [i for i, data in enumerate(connected_ways) if (data[0] == data[-1])]
             connected_ways = [i for j, i in enumerate(connected_ways) if j not in to_del]
         if len(connected_ways) > 1:
-            connected_ways = _link_unconnected(connected_ways, threshold=500)
+            connected_ways = _link_unconnected(connected_ways)
         else:
             connected_ways = connected_ways[0]
 

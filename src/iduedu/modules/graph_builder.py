@@ -78,7 +78,7 @@ def get_single_public_transport_graph(
         overpass_data = get_routes_by_poly(polygon, public_transport_type)
     local_crs = estimate_crs_for_overpass(overpass_data)
 
-    edgenode_for_routes = overpass_data.apply(lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1)
+    edgenode_for_routes = overpass_data.parallel_apply(lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1)
 
     graph_df = pd.concat(edgenode_for_routes.tolist(), ignore_index=True)
     to_return = graph_data_to_nx(graph_df)
