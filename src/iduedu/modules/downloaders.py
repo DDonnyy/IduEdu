@@ -46,7 +46,9 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
     result = requests.post(OVERPASS_URL, data={"data": overpass_query})
     if result.status_code == 200:
         json_result = result.json()["elements"]
-        return pd.DataFrame(json_result)
+        data = pd.DataFrame(json_result)
+        data['transport_type'] = public_transport_type
+        return data
     else:
         raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
 
@@ -54,7 +56,6 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
 def get_routes_by_osm_id(osm_id, public_transport_type: str) -> pd.DataFrame:
     boundary = get_boundary_by_osm_id(osm_id)
     if isinstance(boundary, MultiPolygon):
-        print('11111')
         boundary = boundary.convex_hull
     return get_routes_by_poly(boundary, public_transport_type)
 
@@ -65,6 +66,3 @@ def get_routes_by_terr_name(terr_name: str, public_transport_type: str) -> pd.Da
     if isinstance(boundary, MultiPolygon):
         boundary = boundary.convex_hull
     return get_routes_by_poly(boundary, public_transport_type)
-
-
-

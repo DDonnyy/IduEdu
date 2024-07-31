@@ -14,20 +14,20 @@ from shapely import Point
 from shapely.geometry import LineString
 from shapely.ops import substring
 
-PLATFORM_ROLES = ['platform_entry_only', 'platform', 'platform_exit_only']
-STOPS_ROLES = ['stop', 'stop_exit_only', 'stop_entry_only']
+PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
+STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
 
 
 def estimate_crs_for_overpass(overpass_data):
     def find_bounds(bounds):
         df_expanded = pd.json_normalize(bounds)
-        min_lat = df_expanded['minlat'].min()
-        min_lon = df_expanded['minlon'].min()
-        max_lat = df_expanded['maxlat'].max()
-        max_lon = df_expanded['maxlon'].max()
+        min_lat = df_expanded["minlat"].min()
+        min_lon = df_expanded["minlon"].min()
+        max_lat = df_expanded["maxlat"].max()
+        max_lon = df_expanded["maxlon"].max()
         return min_lat, min_lon, max_lat, max_lon
 
-    min_lat, min_lon, max_lat, max_lon = find_bounds(overpass_data['bounds'])
+    min_lat, min_lon, max_lat, max_lon = find_bounds(overpass_data["bounds"])
     utm_crs_list = query_utm_crs_info(
         datum_name="WGS 84",
         area_of_interest=AreaOfInterest(
@@ -50,26 +50,33 @@ def _link_unconnected(connected_ways, threshold) -> list:
     indexes = []
     for i in range(len(connected_ways) - 1):
         min_index = np.unravel_index(np.argmin(distances), distances.shape)
-        if distances[min_index] > threshold:
-            way_inds = [way_ind for x in indexes for way_ind in (x[0] // 2, x[1] // 2)]
-            return _link_unconnected([way for i, way in enumerate(connected_ways) if i in way_inds], threshold)
+        # if distances[min_index] > threshold:
+        #     way_inds = [way_ind for x in indexes for way_ind in (x[0] // 2, x[1] // 2)]
+        #     return _link_unconnected([way for i, way in enumerate(connected_ways) if i in way_inds], threshold)
         distances[min_index[0], :] = np.inf
         distances[min_index[1], :] = np.inf
         distances[:, min_index[0]] = np.inf
         distances[:, min_index[1]] = np.inf
+        pair_min_ind = [(x // 2) * 2 if ((x // 2) * 2 != x) else ((x // 2) * 2 + 1) for x in min_index]
+        distances[pair_min_ind[0], pair_min_ind[1]] = np.inf
+        distances[pair_min_ind[1], pair_min_ind[0]] = np.inf
         indexes.append(min_index)
 
     # Определяем "начальную линию"
     way_inds = [way_ind for x in indexes for way_ind in (x[0] // 2, x[1] // 2)]
     first = next((elem for elem in way_inds if way_inds.count(elem) == 1))
-
+    t = indexes.copy()
     find_ind = first * 2, first * 2 + 1
     new_connected_ways = None
+    connections = []
 
-    # Соединяем воедино
     for i in range(len(connected_ways) - 1):
-        index = next((i for i, t in enumerate(indexes) if (find_ind[0] in t or find_ind[1] in t)))
+        try:
+            index = next((i for i, t in enumerate(indexes) if (find_ind[0] in t or find_ind[1] in t)))
+        except Exception:
+            print(1)
         connection = indexes.pop(index)
+        connections.append(connection)
         if new_connected_ways is None:
             first = next((x for x in connection if x in find_ind))
             if first % 2 != 0:
@@ -89,40 +96,42 @@ def _link_unconnected(connected_ways, threshold) -> list:
 
 
 def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
-    transformer = Transformer.from_crs('EPSG:4326', crs, always_xy=True)
+    transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
 
     def transform_geometry(loc):
-        if isinstance(loc['geometry'], float):
+        if isinstance(loc["geometry"], float):
             return transformer.transform(loc["lon"], loc["lat"])
         else:
-            p = LineString([transformer.transform(coords["lon"], coords["lat"]) for coords in loc['geometry']]).centroid
+            p = LineString([transformer.transform(coords["lon"], coords["lat"]) for coords in loc["geometry"]]).centroid
             return p.x, p.y
 
     def process_roles(route, roles):
-        filtered = route[route['role'].isin(roles)]
+        filtered = route[route["role"].isin(roles)]
         if len(filtered) == 0:
             return None
         else:
             return filtered.apply(transform_geometry, axis=1).tolist()
 
-    if 'ref' in loc['tags'].keys():
-        transport_name = loc['tags']['ref']
-    elif 'name' in loc['tags'].keys():
-        transport_name = loc['tags']['name']
+    if "ref" in loc["tags"].keys():
+        transport_name = loc["tags"]["ref"]
+    elif "name" in loc["tags"].keys():
+        transport_name = loc["tags"]["name"]
     else:
         transport_name = None
 
     route = pd.DataFrame(loc["members"])
 
+    if "geometry" not in route.columns:
+        route["geometry"] = np.NAN
+
     platforms = process_roles(route, PLATFORM_ROLES)
     stops = process_roles(route, STOPS_ROLES)
 
-    ways = route[(route["type"] == "way") & (route["role"] == '')]
+    ways = route[(route["type"] == "way") & (route["role"] == "")]
 
     if len(ways) > 0:
         ways = ways["geometry"].reset_index(drop=True)
         ways = ways.apply(lambda x: ([transformer.transform(coords["lon"], coords["lat"]) for coords in x])).tolist()
-
         connected_ways = [[]]
         cur_way = 0
         for coords in ways:
@@ -142,13 +151,12 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
                 connected_ways[cur_way] = coords[1:][::-1] + connected_ways[cur_way]
             elif connected_ways[cur_way][0] == coords[-1]:
                 connected_ways[cur_way] = coords + connected_ways[cur_way][1:]
-            # Случай если нету соединяющей координаты
+            # Случай если нету соединяющей точки между линиями маршрута
             else:
                 connected_ways += [coords]
                 cur_way += 1
         # Соединяем линии по ближайшим точкам этих линий
         if len(connected_ways) > 1:
-            # Check if any loops in data and remove it
             to_del = [i for i, data in enumerate(connected_ways) if (data[0] == data[-1])]
             connected_ways = [i for j, i in enumerate(connected_ways) if j not in to_del]
         if len(connected_ways) > 1:
@@ -159,10 +167,10 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
     else:
         connected_ways = None
 
-    return pd.Series({"path": connected_ways, "platforms": platforms, 'stops': stops, 'route': transport_name})
+    return pd.Series({"path": connected_ways, "platforms": platforms, "stops": stops, "route": transport_name})
 
 
-def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame | None:
+def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> DataFrame | None:
     graph_data = []
     node_id = 0
     name = loc.route
@@ -174,19 +182,26 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
 
     def add_node(desc, x, y, transport=None):
         if not transport:
-            graph_data.append({'node_id': (loc.name, node_id), 'point': (x, y), 'desc': desc, 'route': name})
+            graph_data.append({"node_id": (loc_id, node_id), "point": (x, y), "desc": desc, "route": name})
         else:
             graph_data.append(
-                {'node_id': (loc.name, node_id), 'point': (x, y), 'desc': desc, 'route': name, 'type': transport_type})
+                {"node_id": (loc_id, node_id), "point": (x, y), "desc": desc, "route": name, "type": transport_type}
+            )
 
     def add_edge(u, v, geometry=None, desc=None, transport=None):
         if not transport:
-            graph_data.append(
-                {'u': (loc.name, u), 'v': (loc.name, v), 'geometry': geometry, 'desc': desc, 'route': name})
+            graph_data.append({"u": (loc_id, u), "v": (loc_id, v), "geometry": geometry, "desc": desc, "route": name})
         else:
             graph_data.append(
-                {'u': (loc.name, u), 'v': (loc.name, v), 'geometry': geometry, 'desc': desc, 'route': name,
-                 'type': transport_type})
+                {
+                    "u": (loc_id, u),
+                    "v": (loc_id, v),
+                    "geometry": geometry,
+                    "desc": desc,
+                    "route": name,
+                    "type": transport_type,
+                }
+            )
 
     def offset_direction(point):
         # 1 if left 0 if right для определения с какой стороны от линии точки
@@ -217,7 +232,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
         x2, y2 = line.coords[-1]
 
         dx, dy = x2 - x1, y2 - y1
-        length = math.sqrt(dx ** 2 + dy ** 2)
+        length = math.sqrt(dx**2 + dy**2)
         dx, dy = dx / length, dy / length
 
         if direction == 0:  # Вправо
@@ -236,24 +251,24 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
         dist = path.project(platform)
         projected_stop = path.interpolate(dist)
         platform_to_stop = LineString([platform, projected_stop])
-
-        add_node('stop', projected_stop.x, projected_stop.y, transport=True)
+        add_node("stop", projected_stop.x, projected_stop.y, transport=True)
         if last_dist is not None:
             cur_path = substring(path, last_dist, dist)
-            add_edge(last_projected_stop_id, node_id, desc='routing', geometry=cur_path, transport=True)
+            add_edge(last_projected_stop_id, node_id, desc="routing", geometry=cur_path, transport=True)
         last_projected_stop_id = node_id
 
         node_id += 1
-        add_node('platform', platform.x, platform.y)
-        add_edge(node_id - 1, node_id, desc='boarding', geometry=platform_to_stop)
-        add_edge(node_id, node_id - 1, desc='boarding', geometry=platform_to_stop)
+        add_node("platform", platform.x, platform.y)
+        add_edge(node_id - 1, node_id, desc="boarding", geometry=platform_to_stop)
+        add_edge(node_id, node_id - 1, desc="boarding", geometry=platform_to_stop)
         node_id += 1
         return dist, last_projected_stop_id, node_id
 
     if not path:
-        warnings.warn("В одном из маршрутов нет пути, пока не работаю с этим", FutureWarning)
+        warnings.warn("В одном из маршрутов нет пути, пока не работаю с этим", UserWarning)
         return None
     path = LineString(path)
+
     # Если нет платформ
     if not platforms:
         if not stops:  # Строим маршрут по пути начало - конец
@@ -272,8 +287,9 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
         connection += [(-1, stop) for stop in set(range(len(stops))) ^ set(indices)]
         connection.sort(key=lambda x: x[1])
         direction = offset_direction(Point(platforms[len(platforms) // 2]))
-        stops_to_platforms = {stop: offset_point(Point(stops[stop]), direction, 7) for stop in
-                              set(range(len(stops))) ^ set(indices)}
+        stops_to_platforms = {
+            stop: offset_point(Point(stops[stop]), direction, 7) for stop in set(range(len(stops))) ^ set(indices)
+        }
         platforms = [coord if (coord != -1) else (stops_to_platforms.get(ind)) for coord, ind in connection]
         stops = []
 
@@ -284,9 +300,12 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
         if dist == path.length or dist == 0:  # Если платформа является конечной
             platforms = [offset_point(path.interpolate(0), 1, 7), offset_point(path.interpolate(path.length), 1, 7)]
         else:  # Если платформа не является конечной
-            platforms = [offset_point(path.interpolate(0), 1, 7), platform,
-                         offset_point(path.interpolate(path.length), 1, 7)]
-    platforms = [Point(coords) for coords in platforms]
+            platforms = [
+                offset_point(path.interpolate(0), 1, 7),
+                platform,
+                offset_point(path.interpolate(path.length), 1, 7),
+            ]
+    platforms = [Point(coords) for coords in platforms if not Point(coords).is_empty]
     if len(platforms) >= len(stops):
         for platform in platforms:
             if not last_dist:
@@ -301,4 +320,9 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type) -> DataFrame 
     return to_return
 
 
-
+def parse_overpass_to_edgenode(loc, crs) -> pd.DataFrame | None:
+    loc_id = loc.name
+    transport_type = loc.transport_type
+    parsed_geometry = parse_overpass_route_response(loc, crs)
+    edgenode = geometry_to_graph_edge_node_df(parsed_geometry, transport_type, loc_id)
+    return edgenode

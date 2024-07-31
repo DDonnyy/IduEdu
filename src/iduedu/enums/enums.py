@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class Transport(Enum):
+class PublicTrasport(Enum):
     """
     Enumeration class for edge types in graphs.
     """
@@ -9,16 +9,41 @@ class Transport(Enum):
     BUS = "bus"
     TRAM = "tram"
     TROLLEYBUS = "trolleybus"
+
+    @property
+    def russian_name(self) -> str:
+        names = {
+            PublicTrasport.SUBWAY: "Метро",
+            PublicTrasport.BUS: "Автобус",
+            PublicTrasport.TRAM: "Трамвай",
+            PublicTrasport.TROLLEYBUS: "Троллейбус",
+        }
+        return names[self]
+
+    @property
+    def avg_speed(self) -> float:
+        """
+        Average speed in m/min.
+        """
+        speeds = {
+            PublicTrasport.SUBWAY: 40 * 1000 / 60,
+            PublicTrasport.BUS: 20 * 1000 / 60,
+            PublicTrasport.TRAM: 20 * 1000 / 60,
+            PublicTrasport.TROLLEYBUS: 18 * 1000 / 60,
+        }
+        return speeds[self]
+
+
+class Transport(Enum):
+    """
+    Enumeration class for edge types in graphs.
+    """
     WALK = "walk"
     DRIVE = "car"
 
     @property
     def russian_name(self) -> str:
         names = {
-            Transport.SUBWAY: "Метро",
-            Transport.BUS: "Автобус",
-            Transport.TRAM: "Трамвай",
-            Transport.TROLLEYBUS: "Троллейбус",
             Transport.WALK: "Пешком",
             Transport.DRIVE: "Автомобиль",
         }
@@ -30,10 +55,6 @@ class Transport(Enum):
         Average speed in m/min.
         """
         speeds = {
-            Transport.SUBWAY: 40 * 1000 / 60,
-            Transport.BUS: 20 * 1000 / 60,
-            Transport.TRAM: 20 * 1000 / 60,
-            Transport.TROLLEYBUS: 18 * 1000 / 60,
             Transport.WALK: 5 * 1000 / 60,
             Transport.DRIVE: 50 * 1000 / 60,
         }
