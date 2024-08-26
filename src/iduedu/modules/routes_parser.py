@@ -1,43 +1,18 @@
 import math
 import warnings
 
+import numpy as np
+import pandas as pd
 from pandas import DataFrame
-from pyproj import CRS
-from pyproj.aoi import AreaOfInterest
-from pyproj.database import query_utm_crs_info
+from pyproj import CRS, Transformer
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
-import pandas as pd
-from pyproj import Transformer
-import numpy as np
 from shapely import Point
 from shapely.geometry import LineString
 from shapely.ops import substring
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
-
-
-def estimate_crs_for_overpass(overpass_data):
-    def find_bounds(bounds):
-        df_expanded = pd.json_normalize(bounds)
-        min_lat = df_expanded["minlat"].min()
-        min_lon = df_expanded["minlon"].min()
-        max_lat = df_expanded["maxlat"].max()
-        max_lon = df_expanded["maxlon"].max()
-        return min_lat, min_lon, max_lat, max_lon
-
-    min_lat, min_lon, max_lat, max_lon = find_bounds(overpass_data["bounds"])
-    utm_crs_list = query_utm_crs_info(
-        datum_name="WGS 84",
-        area_of_interest=AreaOfInterest(
-            west_lon_degree=min_lon,
-            south_lat_degree=min_lat,
-            east_lon_degree=max_lon,
-            north_lat_degree=max_lat,
-        ),
-    )
-    return CRS.from_epsg(utm_crs_list[0].code)
 
 
 def _link_unconnected(disconnected_ways) -> list:
@@ -85,12 +60,16 @@ def _link_unconnected(disconnected_ways) -> list:
         line = ind // 2
         if position == 0:
             connected_ways = (
-                disconnected_ways[line] + connected_ways if ind % 2 == 1 else (disconnected_ways[line][::-1] + connected_ways)
+                disconnected_ways[line] + connected_ways
+                if ind % 2 == 1
+                else (disconnected_ways[line][::-1] + connected_ways)
             )
             extreme_points = [rel_point, extreme_points[1]]
         else:
             connected_ways = (
-                connected_ways + disconnected_ways[line] if ind % 2 == 0 else (connected_ways + disconnected_ways[line][::-1])
+                connected_ways + disconnected_ways[line]
+                if ind % 2 == 0
+                else (connected_ways + disconnected_ways[line][::-1])
             )
             extreme_points = [extreme_points[0], rel_point]
 
@@ -200,16 +179,23 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
                 {"node_id": (loc_id, node_id), "point": (x, y), "desc": desc, "route": name, "type": transport_type}
             )
 
-    def add_edge(u, v, geometry=None, desc=None, transport=None):
+    def add_edge(u, v, geometry=None, transport=None):
         if not transport:
-            graph_data.append({"u": (loc_id, u), "v": (loc_id, v), "geometry": geometry, "desc": desc, "route": name})
+            graph_data.append(
+                {
+                    "u": (loc_id, u),
+                    "v": (loc_id, v),
+                    "geometry": geometry,
+                    "route": name,
+                    "type": "boarding",
+                }
+            )
         else:
             graph_data.append(
                 {
                     "u": (loc_id, u),
                     "v": (loc_id, v),
                     "geometry": geometry,
-                    "desc": desc,
                     "route": name,
                     "type": transport_type,
                 }
@@ -266,13 +252,13 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         add_node("stop", projected_stop.x, projected_stop.y, transport=True)
         if last_dist is not None:
             cur_path = substring(path, last_dist, dist)
-            add_edge(last_projected_stop_id, node_id, desc="routing", geometry=cur_path, transport=True)
+            add_edge(last_projected_stop_id, node_id, geometry=cur_path, transport=True)
         last_projected_stop_id = node_id
 
         node_id += 1
         add_node("platform", platform.x, platform.y)
-        add_edge(node_id - 1, node_id, desc="boarding", geometry=platform_to_stop)
-        add_edge(node_id, node_id - 1, desc="boarding", geometry=platform_to_stop)
+        add_edge(node_id - 1, node_id, geometry=platform_to_stop)
+        add_edge(node_id, node_id - 1, geometry=platform_to_stop)
         node_id += 1
         return dist, last_projected_stop_id, node_id
 

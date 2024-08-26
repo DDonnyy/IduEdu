@@ -5,6 +5,7 @@ class PublicTrasport(Enum):
     """
     Enumeration class for edge types in graphs.
     """
+
     SUBWAY = "subway"
     BUS = "bus"
     TRAM = "tram"
@@ -38,6 +39,7 @@ class Transport(Enum):
     """
     Enumeration class for edge types in graphs.
     """
+
     WALK = "walk"
     DRIVE = "car"
 

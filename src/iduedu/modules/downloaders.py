@@ -1,15 +1,14 @@
-import osm2geojson
-import pandas as pd
 import geopandas as gpd
-import requests
+import osm2geojson
 import osmnx as ox
-
-from shapely import Polygon, unary_union, MultiPolygon
+import pandas as pd
+import requests
+from shapely import MultiPolygon, Polygon, unary_union
 
 OVERPASS_URL = "http://lz4.overpass-api.de/api/interpreter"
 
 
-def get_boundary_by_osm_id(osm_id):
+def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
     overpass_query = f"""
             [out:json];
                     (
@@ -47,7 +46,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
     if result.status_code == 200:
         json_result = result.json()["elements"]
         data = pd.DataFrame(json_result)
-        data['transport_type'] = public_transport_type
+        data["transport_type"] = public_transport_type
         return data
     else:
         raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
