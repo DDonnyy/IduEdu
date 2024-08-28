@@ -3,6 +3,7 @@ import osm2geojson
 import osmnx as ox
 import pandas as pd
 import requests
+from loguru import logger
 from shapely import MultiPolygon, Polygon, unary_union
 
 OVERPASS_URL = "http://lz4.overpass-api.de/api/interpreter"
@@ -16,6 +17,7 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
                     );
             out geom;
             """
+    logger.debug(f"Downloading territory bounds with osm_id <{osm_id}> ...")
     result = requests.get(OVERPASS_URL, params={"data": overpass_query})
     if result.status_code == 200:
         json_result = result.json()
@@ -29,6 +31,7 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
 
 def get_boundary_by_name(territory_name: str) -> Polygon | MultiPolygon:
     # logger.info(f"Retrieving polygon geometry for '{territory_name}'")
+    logger.debug(f"Downloading territory bounds with name <{territory_name}> ...")
     place = ox.geocode_to_gdf(territory_name)
     return unary_union(place.geometry)
 
@@ -42,6 +45,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
                 );
         out geom;
         """
+    logger.debug(f"Downloading routes from OSM with type <{public_transport_type}> ...")
     result = requests.post(OVERPASS_URL, data={"data": overpass_query})
     if result.status_code == 200:
         json_result = result.json()["elements"]

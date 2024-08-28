@@ -1,14 +1,27 @@
+import geopandas as gpd
 import networkx as nx
+import numpy as np
 import pandas as pd
+from loguru import logger
 from pyproj import CRS
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
-from shapely import Polygon
+from shapely import Point, Polygon
 
 
-def clip_nx_graph(graph: nx.Graph, polygon: Polygon):
-    # TODO Добавить обрезку по полигону
-    print(1)
+def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
+    """
+
+    :param graph:
+    :param polygon: should be in same crs as coordinates in graph
+    :return:
+    """
+    crs = graph.graph["crs"]
+    points = gpd.GeoDataFrame(
+        data=[{"id": p_id, "geometry": Point(data["x"], data["y"])} for p_id, data in graph.nodes(data=True)], crs=crs
+    ).clip(polygon, True)
+    clipped = graph.subgraph(points["id"].tolist())
+    return clipped
 
 
 def reproject_nx_graph(graph: nx.Graph, crs=None):
@@ -21,26 +34,18 @@ def reproject_nx_graph(graph: nx.Graph, crs=None):
     print(1)
 
 
-def estimate_crs_for_bounds(min_lat, min_lon, max_lat, max_lon):
+def estimate_crs_for_bounds(minx, miny, maxx, maxy):
+    x_center = np.mean([minx, maxx])
+    y_center = np.mean([miny, maxy])
     utm_crs_list = query_utm_crs_info(
         datum_name="WGS 84",
         area_of_interest=AreaOfInterest(
-            west_lon_degree=min_lon,
-            south_lat_degree=min_lat,
-            east_lon_degree=max_lon,
-            north_lat_degree=max_lat,
+            west_lon_degree=x_center,
+            south_lat_degree=y_center,
+            east_lon_degree=x_center,
+            north_lat_degree=y_center,
         ),
     )
-    return CRS.from_epsg(utm_crs_list[0].code)
-
-
-def estimate_crs_for_overpass(overpass_data):
-    def find_bounds(bounds):
-        df_expanded = pd.json_normalize(bounds)
-        min_lat = df_expanded["minlat"].min()
-        min_lon = df_expanded["minlon"].min()
-        max_lat = df_expanded["maxlat"].max()
-        max_lon = df_expanded["maxlon"].max()
-        return min_lat, min_lon, max_lat, max_lon
-
-    return estimate_crs_for_bounds(*find_bounds(overpass_data["bounds"]))
+    crs = CRS.from_epsg(utm_crs_list[0].code)
+    logger.info(f"Estimated CRS for territory {crs}")
+    return crs

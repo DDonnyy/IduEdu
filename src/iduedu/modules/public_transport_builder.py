@@ -1,24 +1,25 @@
 import multiprocessing
 
+import geopandas as gpd
 import networkx as nx
 import pandas as pd
+from loguru import logger
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
 
-from ..utils.utils import estimate_crs_for_overpass
-from ..enums.enums import PublicTrasport, Transport
+from ..enums.pt_enums import PublicTrasport
+from ..utils.utils import clip_nx_graph, estimate_crs_for_bounds
 from .downloaders import (
     get_boundary_by_name,
     get_boundary_by_osm_id,
-    get_routes_by_osm_id,
     get_routes_by_poly,
-    get_routes_by_terr_name,
 )
 from .routes_parser import parse_overpass_to_edgenode
 
 
 def graph_data_to_nx(graph_df) -> nx.DiGraph:
+
     platforms = graph_df[graph_df["desc"] == "platform"]
     platforms = platforms.groupby("point").agg({"node_id": list, "route": list, "desc": "first"}).reset_index()
 
@@ -31,7 +32,7 @@ def graph_data_to_nx(graph_df) -> nx.DiGraph:
         index = row.name
         node_id_list = row["node_id"]
         for node_id in node_id_list:
-            mapping[node_id] = index
+            mapping[node_id] = int(index)
 
     def replace_with_mapping(value):
         return mapping.get(value)
@@ -41,8 +42,19 @@ def graph_data_to_nx(graph_df) -> nx.DiGraph:
     graph_df["v"] = graph_df["v"].apply(replace_with_mapping)
     graph_df["node_id"] = graph_df["node_id"].apply(replace_with_mapping)
 
-    edges = graph_df[graph_df["desc"].isna()]
+    edges = graph_df[graph_df["desc"].isna()].copy()
 
+    def calc_len_time(row):
+        if row.type == "boarding":
+            return 0, 0
+        length = round(row.geometry.length, 3)
+        return length, round(length / PublicTrasport[row.type.upper()].avg_speed, 3)
+
+    edges[["length", "time_min"]] = edges.apply(
+        calc_len_time,
+        axis=1,
+        result_type="expand",
+    )
     graph = nx.DiGraph()
     for i, node in all_nodes.iterrows():
         route = ",".join(map(str, set(node["route"])))
@@ -53,7 +65,9 @@ def graph_data_to_nx(graph_df) -> nx.DiGraph:
             edge["v"],
             route=edge["route"],
             type=edge["type"],
-            geometry=str(edge["geometry"]),
+            geometry=edge["geometry"],
+            length=edge["length"],
+            time_min=edge["time_min"],
         )
     return graph
 
@@ -69,30 +83,41 @@ def _multi_process_row(args):
 
 
 def get_single_public_transport_graph(
-    public_transport_type: str | Transport,
+    public_transport_type: str | PublicTrasport,
     osm_id: int | None = None,
     territory_name: str | None = None,
     polygon: Polygon | MultiPolygon | None = None,
+    clip_by_bounds: bool = False,
 ):
+    """
+
+    :param clip_by_bounds:
+    :param public_transport_type:
+    :param osm_id:
+    :param territory_name:
+    :param polygon: should be in valid crs (4326)
+    :return:
+    """
     if osm_id is None and territory_name is None and polygon is None:
         raise ValueError("Either osm_id or name or polygon must be specified")
-
     if osm_id:
-        overpass_data = get_routes_by_osm_id(osm_id, public_transport_type)
+        polygon: Polygon = get_boundary_by_osm_id(osm_id)
     elif territory_name:
-        overpass_data = get_routes_by_terr_name(territory_name, public_transport_type)
-    else:
-        if isinstance(polygon, MultiPolygon):
-            polygon = polygon.convex_hull
-        overpass_data = get_routes_by_poly(polygon, public_transport_type)
-    local_crs = estimate_crs_for_overpass(overpass_data)
+        polygon: Polygon = get_boundary_by_name(territory_name)
+
+    if isinstance(polygon, MultiPolygon):
+        polygon: Polygon = polygon.convex_hull
+
+    overpass_data = get_routes_by_poly(polygon, public_transport_type)
+
+    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
     if overpass_data.shape[0] > 100:
         # Если много маршрутов - обрабатываем в параллели
         n_cpus = multiprocessing.cpu_count()
         rows = [(row, local_crs) for _, row in overpass_data.iterrows()]
         chunksize = max(1, len(rows) // n_cpus)
-        edgenode_for_routes = process_map(_multi_process_row, rows, desc="Parsing routes",chunksize=chunksize)
+        edgenode_for_routes = process_map(_multi_process_row, rows, desc="Parsing routes", chunksize=chunksize)
     else:
         tqdm.pandas(desc="Parsing routes data")
         edgenode_for_routes = overpass_data.progress_apply(
@@ -100,7 +125,11 @@ def get_single_public_transport_graph(
         ).tolist()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
     to_return = graph_data_to_nx(graph_df)
-    to_return.graph['crs'] = local_crs
+    to_return.graph["crs"] = local_crs
+
+    if clip_by_bounds:
+        polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
+        return clip_nx_graph(to_return, polygon)
     return to_return
 
 
@@ -108,6 +137,7 @@ def get_all_public_transport_graph(
     osm_id: int | None = None,
     territory_name: str | None = None,
     polygon: Polygon | MultiPolygon | None = None,
+    clip_by_bounds: bool = False,
 ):
 
     if osm_id is None and territory_name is None and polygon is None:
@@ -122,10 +152,12 @@ def get_all_public_transport_graph(
         polygon = polygon.convex_hull
 
     args_list = [(polygon, transport) for transport in transports]
+
     overpass_data = pd.concat(
         process_map(_get_multi_routes_by_poly, args_list, desc="Downloading routes"), ignore_index=True
     ).reset_index(drop=True)
-    local_crs = estimate_crs_for_overpass(overpass_data)
+
+    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
     if overpass_data.shape[0] > 100:
         # Если много маршрутов - обрабатываем в параллели
@@ -142,5 +174,8 @@ def get_all_public_transport_graph(
         ).tolist()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
     to_return = graph_data_to_nx(graph_df)
-    to_return.graph["crs"] = local_crs.to_epsg()
+    to_return.graph["crs"] = local_crs
+    if clip_by_bounds:
+        polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
+        return clip_nx_graph(to_return, polygon)
     return to_return
