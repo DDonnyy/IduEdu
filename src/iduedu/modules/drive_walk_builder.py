@@ -4,12 +4,12 @@ import geopandas as gpd
 import networkx as nx
 import osmnx as ox
 import pandas as pd
-from shapely import MultiPolygon, Polygon, unary_union
 from loguru import logger
+from shapely import MultiPolygon, Polygon, unary_union
+
 from iduedu.enums.drive_enums import HighwayType
-from iduedu.modules.downloaders import get_boundary_by_name, get_boundary_by_osm_id
+from iduedu.modules.downloaders import get_boundary
 from iduedu.utils.utils import estimate_crs_for_bounds
-from tqdm.auto import tqdm
 
 base_filter = (
     "['highway'~'motorway|trunk|primary|secondary|tertiary|unclassified|residential|motorway_link"
@@ -147,15 +147,7 @@ def get_drive_graph(
     territory_name: str | None = None,
     polygon: Polygon | MultiPolygon | None = None,
 ):
-    if osm_id is None and territory_name is None and polygon is None:
-        raise ValueError("Either osm_id or name or polygon must be specified")
-    if osm_id:
-        polygon: Polygon = get_boundary_by_osm_id(osm_id)
-    elif territory_name:
-        polygon: Polygon = get_boundary_by_name(territory_name)
-
-    if isinstance(polygon, MultiPolygon):
-        polygon: Polygon = polygon.convex_hull
+    polygon = get_boundary(osm_id,territory_name,polygon)
 
     return get_drive_graph_by_poly(polygon)
 
@@ -166,15 +158,7 @@ def get_walk_graph(
     polygon: Polygon | MultiPolygon | None = None,
     walk_speed: float = 5 * 1000 / 60,
 ):
-    if osm_id is None and territory_name is None and polygon is None:
-        raise ValueError("Either osm_id or name or polygon must be specified")
-    if osm_id:
-        polygon: Polygon = get_boundary_by_osm_id(osm_id)
-    elif territory_name:
-        polygon: Polygon = get_boundary_by_name(territory_name)
-
-    if isinstance(polygon, MultiPolygon):
-        polygon: Polygon = polygon.convex_hull
+    polygon = get_boundary(osm_id,territory_name,polygon)
 
     logger.debug(f"Downloading walk graph from OSM ...")
     graph = ox.graph_from_polygon(polygon, network_type="walk", truncate_by_edge=False, simplify=True)
@@ -184,6 +168,7 @@ def get_walk_graph(
     nodes, edges = ox.graph_to_gdfs(graph)
     nodes.to_crs(local_crs, inplace=True)
     nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
+    nodes = nodes[["x", "y"]]
     edges.reset_index(inplace=True)
     edges.to_crs(local_crs, inplace=True)
 
@@ -192,6 +177,7 @@ def get_walk_graph(
         axis=1,
         result_type="expand",
     )
+    edges["type"] = "walk"
     edges = edges[
         [
             "u",
@@ -199,6 +185,7 @@ def get_walk_graph(
             "key",
             "length",
             "time_min",
+            "type",
             "geometry",
         ]
     ]

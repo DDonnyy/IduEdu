@@ -3,19 +3,17 @@ import multiprocessing
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
-from loguru import logger
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
 
-from ..enums.pt_enums import PublicTrasport
-from ..utils.utils import clip_nx_graph, estimate_crs_for_bounds
 from .downloaders import (
-    get_boundary_by_name,
-    get_boundary_by_osm_id,
     get_routes_by_poly,
+    get_boundary,
 )
 from .routes_parser import parse_overpass_to_edgenode
+from ..enums.pt_enums import PublicTrasport
+from ..utils.utils import clip_nx_graph, estimate_crs_for_bounds
 
 
 def graph_data_to_nx(graph_df) -> nx.DiGraph:
@@ -69,6 +67,7 @@ def graph_data_to_nx(graph_df) -> nx.DiGraph:
             length=edge["length"],
             time_min=edge["time_min"],
         )
+
     return graph
 
 
@@ -98,15 +97,7 @@ def get_single_public_transport_graph(
     :param polygon: should be in valid crs (4326)
     :return:
     """
-    if osm_id is None and territory_name is None and polygon is None:
-        raise ValueError("Either osm_id or name or polygon must be specified")
-    if osm_id:
-        polygon: Polygon = get_boundary_by_osm_id(osm_id)
-    elif territory_name:
-        polygon: Polygon = get_boundary_by_name(territory_name)
-
-    if isinstance(polygon, MultiPolygon):
-        polygon: Polygon = polygon.convex_hull
+    polygon = get_boundary(osm_id, territory_name, polygon)
 
     overpass_data = get_routes_by_poly(polygon, public_transport_type)
 
@@ -126,7 +117,6 @@ def get_single_public_transport_graph(
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
     to_return = graph_data_to_nx(graph_df)
     to_return.graph["crs"] = local_crs
-
     if clip_by_bounds:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
         return clip_nx_graph(to_return, polygon)
@@ -140,17 +130,9 @@ def get_all_public_transport_graph(
     clip_by_bounds: bool = False,
 ):
 
-    if osm_id is None and territory_name is None and polygon is None:
-        raise ValueError("Either osm_id or name or polygon must be specified")
+    polygon = get_boundary(osm_id, territory_name, polygon)
+
     transports = [transport.value for transport in PublicTrasport]
-    if osm_id:
-        polygon = get_boundary_by_osm_id(osm_id)
-    elif territory_name:
-        polygon = get_boundary_by_name(territory_name)
-
-    if isinstance(polygon, MultiPolygon):
-        polygon = polygon.convex_hull
-
     args_list = [(polygon, transport) for transport in transports]
 
     overpass_data = pd.concat(

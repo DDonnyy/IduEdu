@@ -257,8 +257,10 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
 
         node_id += 1
         add_node("platform", platform.x, platform.y)
-        add_edge(node_id - 1, node_id, geometry=platform_to_stop)
-        add_edge(node_id, node_id - 1, geometry=platform_to_stop)
+        # add_edge(node_id - 1, node_id, geometry=platform_to_stop)
+        # add_edge(node_id, node_id - 1, geometry=platform_to_stop)
+        add_edge(node_id - 1, node_id, geometry=None)
+        add_edge(node_id, node_id - 1, geometry=None)
         node_id += 1
         return dist, last_projected_stop_id, node_id
 

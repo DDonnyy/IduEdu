@@ -36,6 +36,22 @@ def get_boundary_by_name(territory_name: str) -> Polygon | MultiPolygon:
     return unary_union(place.geometry)
 
 
+def get_boundary(
+    osm_id: int | None = None, territory_name: str | None = None, polygon: Polygon | MultiPolygon | None = None
+) -> Polygon:
+    if osm_id is None and territory_name is None and polygon is None:
+        raise ValueError("Either osm_id or name or polygon must be specified")
+    if osm_id:
+        polygon: Polygon = get_boundary_by_osm_id(osm_id)
+    elif territory_name:
+        polygon: Polygon = get_boundary_by_name(territory_name)
+
+    if isinstance(polygon, MultiPolygon):
+        polygon: Polygon = polygon.convex_hull
+
+    return polygon
+
+
 def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataFrame:
     polygon_coords = " ".join(f"{y} {x}" for x, y in polygon.exterior.coords[:-1])
     overpass_query = f"""
