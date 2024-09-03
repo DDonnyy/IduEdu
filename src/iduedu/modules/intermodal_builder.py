@@ -11,10 +11,10 @@ from loguru import logger
 
 
 def get_intermodal_graph(
-    osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    clip_by_bounds=False,
+        osm_id: int | None = None,
+        territory_name: str | None = None,
+        polygon: Polygon | MultiPolygon | None = None,
+        clip_by_bounds=False,
 ):
     """
     intermodal graph - composition of public transport and walk graphes, where platforms are the connecting link between two

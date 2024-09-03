@@ -24,14 +24,15 @@ def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
     return clipped
 
 
-def reproject_nx_graph(graph: nx.Graph, crs=None):
+def reproject_nx_graph(graph: nx.Graph, crs_to=None):
     """
 
     :param graph:
-    :param crs: by default None, will be determine automatically
+    :param crs_to: by default None, will be determine automatically
     :return:
     """
-    print(1)
+    raise NotImplemented
+    return None
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy):

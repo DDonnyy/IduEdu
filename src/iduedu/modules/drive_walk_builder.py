@@ -2,6 +2,7 @@ import re
 
 import geopandas as gpd
 import networkx as nx
+import numpy as np
 import osmnx as ox
 import pandas as pd
 from loguru import logger
@@ -90,7 +91,10 @@ def get_max_speed(highway_types) -> float:
         return 40 * 1000 / 60
 
 
-def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, filter: str = None) -> nx.MultiDiGraph:
+def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, additional_edgedata=None,
+                            filter: str = None) -> nx.MultiDiGraph:
+    if additional_edgedata is None:
+        additional_edgedata = []
     if not filter:
         filter = base_filter
     if isinstance(polygon, MultiPolygon):
@@ -109,6 +113,8 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, filter: str = None)
     nodes, edges = ox.graph_to_gdfs(graph)
     edges: gpd.GeoDataFrame
     edges.reset_index(inplace=True)
+    if 'ref' not in edges.columns:
+        edges['ref'] = pd.NA
     edges["reg"] = edges.apply(lambda row: determine_reg(row["ref"], row["highway"]), axis=1)
 
     nodes.to_crs(local_crs, inplace=True)
@@ -122,20 +128,10 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, filter: str = None)
         axis=1,
         result_type="expand",
     )
-    edges = edges[
-        [
-            "u",
-            "v",
-            "key",
-            # "highway",
-            # "maxspeed",
-            "reg",
-            # "ref",
-            "length",
-            "time_min",
-            "geometry",
-        ]
-    ]
+    edgesdata = ["u", "v", "key", "length", "time_min", "geometry"] + additional_edgedata
+
+    edges = edges[edgesdata]
+
     edges.set_index(["u", "v", "key"], inplace=True)
     graph = ox.graph_from_gdfs(nodes, edges)
     graph.graph["crs"] = local_crs
@@ -143,22 +139,32 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, filter: str = None)
 
 
 def get_drive_graph(
-    osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
+        osm_id: int | None = None,
+        territory_name: str | None = None,
+        polygon: Polygon | MultiPolygon | None = None,
+        additional_edgedata=None,
 ):
-    polygon = get_boundary(osm_id,territory_name,polygon)
+    """
+    Скорости для разных дорог лежат в enums.drive_enums.py
+    :param additional_edgedata:
+    :param osm_id:
+    :param territory_name:
+    :param polygon: shhould be in CRS 4326
+    :param additional_edgedata: by default no additional info will be added to graph edged data , possible values to be in list ['highway', 'maxspeed','reg','ref','name']
+    :return:
+    """
+    polygon = get_boundary(osm_id, territory_name, polygon)
 
-    return get_drive_graph_by_poly(polygon)
+    return get_drive_graph_by_poly(polygon, additional_edgedata=additional_edgedata)
 
 
 def get_walk_graph(
-    osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    walk_speed: float = 5 * 1000 / 60,
+        osm_id: int | None = None,
+        territory_name: str | None = None,
+        polygon: Polygon | MultiPolygon | None = None,
+        walk_speed: float = 5 * 1000 / 60,
 ):
-    polygon = get_boundary(osm_id,territory_name,polygon)
+    polygon = get_boundary(osm_id, territory_name, polygon)
 
     logger.debug(f"Downloading walk graph from OSM ...")
     graph = ox.graph_from_polygon(polygon, network_type="walk", truncate_by_edge=False, simplify=True)
