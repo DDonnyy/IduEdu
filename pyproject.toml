@@ -2,7 +2,7 @@
 name = "iduedu"
 version = "0.1.0"
 license = "BSD-3-Clause"
-description = "Small utility library containing graph algorighms used in other projects"
+description = "IduEdu is a Python package for the creation and manipulation of complex city networks from OpenStreetMap."
 authors = ["Danila <63115678+DDonnyy@users.noreply.github.com>"]
 readme = "README.md"
 
@@ -46,17 +46,6 @@ disable = [
     "duplicate-code",
     "missing-module-docstring",
     "missing-function-docstring",
-]
-good-names = [
-    "G",
-    "G_ox",
-    "G_nx",
-    "G_nk",
-    "G_walk",
-    "G_drive",
-    "G_base",
-    "G_to_project",
-    "G_public_transport",
 ]
 
 [tool.isort]

@@ -1,7 +1,6 @@
 import geopandas as gpd
 import networkx as nx
 import numpy as np
-import pandas as pd
 from loguru import logger
 from pyproj import CRS
 from pyproj.aoi import AreaOfInterest

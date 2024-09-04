@@ -39,6 +39,36 @@ def get_boundary_by_name(territory_name: str) -> Polygon | MultiPolygon:
 def get_boundary(
     osm_id: int | None = None, territory_name: str | None = None, polygon: Polygon | MultiPolygon | None = None
 ) -> Polygon:
+    """
+    Retrieve the boundary polygon for a given territory, either by OSM ID, territory name, or an existing polygon.
+    If a MultiPolygon is provided, it will be converted to a convex hull.
+
+    Parameters
+    ----------
+    osm_id : int, optional
+        OpenStreetMap ID of the territory to retrieve the boundary for. Either this or `territory_name` must be provided.
+    territory_name : str, optional
+        Name of the territory to retrieve the boundary for. Either this or `osm_id` must be provided.
+    polygon : Polygon | MultiPolygon, optional
+        A custom polygon or MultiPolygon to use instead of querying by `osm_id` or `territory_name`.
+
+    Returns
+    -------
+    Polygon
+        The boundary polygon for the specified territory. If a MultiPolygon was provided, it will return the convex hull.
+
+    Raises
+    ------
+    ValueError
+        If neither `osm_id`, `territory_name`, nor `polygon` are provided.
+
+    Examples
+    --------
+    >>> boundary = get_boundary(osm_id=123456)
+    >>> boundary = get_boundary(territory_name="New York")
+    >>> boundary = get_boundary(polygon=some_polygon)
+    """
+
     if osm_id is None and territory_name is None and polygon is None:
         raise ValueError("Either osm_id or name or polygon must be specified")
     if osm_id:

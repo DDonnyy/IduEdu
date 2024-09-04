@@ -1,5 +1,6 @@
 import concurrent.futures
 
+import networkx as nx
 from shapely import Polygon, MultiPolygon
 
 from iduedu.modules.drive_walk_builder import get_walk_graph
@@ -15,27 +16,64 @@ def get_intermodal_graph(
         territory_name: str | None = None,
         polygon: Polygon | MultiPolygon | None = None,
         clip_by_bounds=False,
-):
+) -> nx.Graph:
     """
-    intermodal graph - composition of public transport and walk graphes, where platforms are the connecting link between two
-    :param clip_by_bounds:
-    :param territory_name:
-    :param osm_id:
-    :param polygon should be in CRS 4326
-    :return:
+    Generate an intermodal transport graph that combines public transport and pedestrian networks,
+    with platforms serving as connection points between the two graphs.
+
+    Parameters
+    ----------
+    osm_id : int, optional
+        OpenStreetMap ID of the territory. Either this or `territory_name` must be provided.
+    territory_name : str, optional
+        Name of the territory to generate the intermodal transport network for. Either this or `osm_id` must be provided.
+    polygon : Polygon | MultiPolygon, optional
+        A custom polygon or MultiPolygon defining the area for the intermodal network. Must be in CRS 4326.
+    clip_by_bounds : bool, optional
+        If True, clips the public transport network to the bounds of the provided polygon. Defaults to False.
+
+    Returns
+    -------
+    nx.Graph
+        An intermodal network graph combining public transport and pedestrian routes, where public transport platforms
+        are linked to nearby walking routes.
+
+    Raises
+    ------
+    ValueError
+        If no valid `osm_id`, `territory_name`, or `polygon` is provided.
+
+    Warnings
+    --------
+    Logs a warning if the public transport graph is empty and only returns the pedestrian graph.
+
+    Examples
+    --------
+    >>> intermodal_graph = get_intermodal_graph(osm_id=1114252, clip_by_bounds=True)
+    >>> intermodal_graph = get_intermodal_graph(territory_name="Санкт-Петербург", polygon=some_polygon)
+
+    Notes
+    -----
+    The function concurrently downloads and processes both the pedestrian and public transport graphs,
+    then combines them using platforms as connection points. If the public transport graph is empty, only the pedestrian graph is returned.
+    The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
+
 
     boundary = get_boundary(osm_id, territory_name, polygon)
     with concurrent.futures.ProcessPoolExecutor() as executor:  # TODO Прокинуть логи наверх если реально...
         walk_graph_future = executor.submit(get_walk_graph, polygon=boundary)
-        logger.info("Started downloading and parsing walk graph...")
+        logger.debug("Started downloading and parsing walk graph...")
         pt_graph_future = executor.submit(
             get_all_public_transport_graph, polygon=boundary, clip_by_bounds=clip_by_bounds
         )
-        logger.info("Started downloading and parsing public trasport graph...")
+        logger.debug("Started downloading and parsing public trasport graph...")
         pt_G = pt_graph_future.result()
-        logger.info("Public trasport graph done!")
+        logger.debug("Public trasport graph done!")
         walk_G = walk_graph_future.result()
-        logger.info("Walk graph done!")
+        logger.debug("Walk graph done!")
+    if len(pt_G.nodes()) == 0:
+        logger.warning("Public trasport graph is empty! Returning only walk graph.")
+        return walk_G
     intermodal = join_pt_walk_graph(pt_G, walk_G)
     return intermodal

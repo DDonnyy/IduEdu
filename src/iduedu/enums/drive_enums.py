@@ -39,7 +39,7 @@ class HighwayType(Enum):
     def max_speed(self):
         speeds = {  # km/h
             HighwayType.MOTORWAY: 110,
-            HighwayType.TRUNK: 110,
+            HighwayType.TRUNK: 90,
             HighwayType.PRIMARY: 60,
             HighwayType.SECONDARY: 60,
             HighwayType.TERTIARY: 60,

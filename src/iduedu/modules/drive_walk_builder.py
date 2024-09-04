@@ -2,7 +2,6 @@ import re
 
 import geopandas as gpd
 import networkx as nx
-import numpy as np
 import osmnx as ox
 import pandas as pd
 from loguru import logger
@@ -20,13 +19,7 @@ base_filter = (
 
 def highway_type_to_reg(highway_type) -> int:
     """
-     Determine the reg_status based on highway type.
-
-    Parameters:
-    highway_type: The type of highway.
-
-    Returns:
-    int: The REG value.
+    Determine the reg_status based on highway type.
     """
     try:
         if isinstance(highway_type, list):
@@ -40,13 +33,6 @@ def highway_type_to_reg(highway_type) -> int:
 def determine_reg(name_roads, highway_type=None) -> int:
     """
     Determine the reg_status based on road_name.
-
-    Parameters:
-    name_roads: The input name_roads.
-    highway_type: The type of highway.
-
-    Returns:
-    int: The value of REG.
     """
 
     if isinstance(name_roads, list):
@@ -71,15 +57,8 @@ def determine_reg(name_roads, highway_type=None) -> int:
 
 def get_max_speed(highway_types) -> float:
     """
-    Получение максимальной скорости для типов дорог.
-
-    Parameters:
-    highway_types: Тип(ы) дорог.
-
-    Returns:
-    float: Максимальная скорость.
+       Determine the speed based on road_name.
     """
-
     # Проверяем, является ли highway_types списком.
     try:
 
@@ -91,8 +70,9 @@ def get_max_speed(highway_types) -> float:
         return 40 * 1000 / 60
 
 
-def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, additional_edgedata=None,
-                            filter: str = None) -> nx.MultiDiGraph:
+def get_drive_graph_by_poly(
+    polygon: Polygon | MultiPolygon, additional_edgedata=None, filter: str = None
+) -> nx.MultiDiGraph:
     if additional_edgedata is None:
         additional_edgedata = []
     if not filter:
@@ -113,8 +93,8 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, additional_edgedata
     nodes, edges = ox.graph_to_gdfs(graph)
     edges: gpd.GeoDataFrame
     edges.reset_index(inplace=True)
-    if 'ref' not in edges.columns:
-        edges['ref'] = pd.NA
+    if "ref" not in edges.columns:
+        edges["ref"] = pd.NA
     edges["reg"] = edges.apply(lambda row: determine_reg(row["ref"], row["highway"]), axis=1)
 
     nodes.to_crs(local_crs, inplace=True)
@@ -123,12 +103,12 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, additional_edgedata
 
     edges["maxspeed"] = edges["highway"].apply(lambda x: get_max_speed(x))
 
-    edges[["length", "time_min"]] = edges.apply(
+    edges[["length_meter", "time_min"]] = edges.apply(
         lambda row: (round(row.geometry.length, 3), round(row.geometry.length / row.maxspeed, 3)),
         axis=1,
         result_type="expand",
     )
-    edgesdata = ["u", "v", "key", "length", "time_min", "geometry"] + additional_edgedata
+    edgesdata = ["u", "v", "key", "length_meter", "time_min", "geometry"] + additional_edgedata
 
     edges = edges[edgesdata]
 
@@ -139,31 +119,86 @@ def get_drive_graph_by_poly(polygon: Polygon | MultiPolygon, additional_edgedata
 
 
 def get_drive_graph(
-        osm_id: int | None = None,
-        territory_name: str | None = None,
-        polygon: Polygon | MultiPolygon | None = None,
-        additional_edgedata=None,
+    osm_id: int | None = None,
+    territory_name: str | None = None,
+    polygon: Polygon | MultiPolygon | None = None,
+    additional_edgedata=None,
 ):
     """
-    Скорости для разных дорог лежат в enums.drive_enums.py
-    :param additional_edgedata:
-    :param osm_id:
-    :param territory_name:
-    :param polygon: shhould be in CRS 4326
-    :param additional_edgedata: by default no additional info will be added to graph edged data , possible values to be in list ['highway', 'maxspeed','reg','ref','name']
-    :return:
+    Generate a road network graph for driving within the specified territory or polygon.
+    Optionally, include additional edge data such as highway type, max speed, registration status and road name.
+
+    Parameters
+    ----------
+    osm_id : int, optional
+        OpenStreetMap ID of the territory to build the graph for. Either this or `territory_name` must be provided.
+    territory_name : str, optional
+        Name of the territory to build the graph for. Either this or `osm_id` must be provided.
+    polygon : Polygon | MultiPolygon, optional
+        A custom polygon or MultiPolygon to define the area for the road network. Must be in CRS 4326.
+    additional_edgedata : list[str], optional
+        List of additional edge data attributes to include in the graph. Possible values include
+        ['highway', 'maxspeed', 'reg', 'ref', 'name'] or any other, that exist in OSM. Defaults to None.
+
+    Returns
+    -------
+    networkx.Graph
+        A road network graph for the specified territory or polygon, with optional additional edge data.
+
+    Examples
+    --------
+    >>> drive_graph = get_drive_graph(osm_id=1114252)
+    >>> drive_graph = get_drive_graph(territory_name="Санкт-Петербург", additional_edgedata=['highway', 'maxspeed'])
+    >>> drive_graph = get_drive_graph(polygon=some_polygon, additional_edgedata=['name', 'ref'])
+
+    Notes
+    -----
+    Road speeds are defined in `iduedu.enums.drive_enums.py`.
+    The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
+
     polygon = get_boundary(osm_id, territory_name, polygon)
 
     return get_drive_graph_by_poly(polygon, additional_edgedata=additional_edgedata)
 
 
 def get_walk_graph(
-        osm_id: int | None = None,
-        territory_name: str | None = None,
-        polygon: Polygon | MultiPolygon | None = None,
-        walk_speed: float = 5 * 1000 / 60,
+    osm_id: int | None = None,
+    territory_name: str | None = None,
+    polygon: Polygon | MultiPolygon | None = None,
+    walk_speed: float = 5 * 1000 / 60,
 ):
+    """
+    Generate a pedestrian road network graph within the specified territory or polygon.
+    The graph's edges includes calculated walking times based on the specified walking speed.
+
+    Parameters
+    ----------
+    osm_id : int, optional
+        OpenStreetMap ID of the territory to build the walking graph for. Either this or `territory_name` must be provided.
+    territory_name : str, optional
+        Name of the territory to build the walking graph for. Either this or `osm_id` must be provided.
+    polygon : Polygon | MultiPolygon, optional
+        A custom polygon or MultiPolygon to define the area for the pedestrian network. Must be in CRS 4326.
+    walk_speed : float, optional
+        Walking speed in meters per minute. Defaults to 5 km/h (approximately 83.33 meters per minute).
+
+    Returns
+    -------
+    networkx.Graph
+        A pedestrian road network graph with edge lengths and walking times for the specified territory or polygon.
+
+    Examples
+    --------
+    >>> walk_graph = get_walk_graph(osm_id=1114252)
+    >>> walk_graph = get_walk_graph(territory_name="Санкт-Петербург", walk_speed=5)
+    >>> walk_graph = get_walk_graph(polygon=some_polygon)
+
+    Notes
+    -----
+    The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
+    """
+
     polygon = get_boundary(osm_id, territory_name, polygon)
 
     logger.debug(f"Downloading walk graph from OSM ...")
@@ -178,7 +213,7 @@ def get_walk_graph(
     edges.reset_index(inplace=True)
     edges.to_crs(local_crs, inplace=True)
 
-    edges[["length", "time_min"]] = edges.apply(
+    edges[["length_meter", "time_min"]] = edges.apply(
         lambda row: (round(row.geometry.length, 3), round(row.geometry.length / walk_speed, 3)),
         axis=1,
         result_type="expand",
@@ -189,7 +224,7 @@ def get_walk_graph(
             "u",
             "v",
             "key",
-            "length",
+            "length_meter",
             "time_min",
             "type",
             "geometry",

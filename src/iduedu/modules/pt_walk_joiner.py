@@ -6,16 +6,49 @@ from loguru import logger
 from shapely.ops import substring
 
 
-def join_pt_walk_graph(public_transport_G: nx.Graph, walk_G: nx.Graph, max_dist=20) -> nx.Graph:
+def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=20) -> nx.Graph:
+    """
+    Combine a public transport network graph with a pedestrian network graph, creating an intermodal transport graph.
+    Platforms in the public transport network are connected to nearby pedestrian network edges based on the specified maximum distance.
 
-    assert public_transport_G.graph["crs"] == walk_G.graph["crs"], "CRS mismatching."
+    Parameters
+    ----------
+    public_transport_g : nx.Graph
+        The public transport network graph, which should contain platform nodes with geometry and CRS information.
+    walk_g : nx.Graph
+        The pedestrian network graph. It must have the same CRS as the public transport graph.
+    max_dist : float, optional
+        Maximum distance (in meters) to search for connections between platforms and pedestrian edges. Defaults to 20 meters.
+
+    Returns
+    -------
+    nx.Graph
+        A combined intermodal transport graph where public transport platforms are connected to nearby pedestrian routes.
+
+    Raises
+    ------
+    AssertionError
+        If the CRS of the public transport graph and pedestrian graph do not match.
+
+    Examples
+    --------
+    >>> intermodal_graph = join_pt_walk_graph(public_transport_g, walk_g, max_dist=50)
+
+    Notes
+    -----
+    The function relabels nodes in both graphs to ensure unique node IDs before composing them.
+    It connects public transport platforms to the closest edges in the pedestrian network by projecting platforms onto edges.
+    Walking speed is taken from the pedestrian graph, and default speed is set to 83.33 m/min if not available.
+    """
+
+    assert public_transport_g.graph["crs"] == walk_g.graph["crs"], "CRS mismatching."
     logger.info("Composing intermodal graph...")
-    num_nodes_G1 = len(public_transport_G.nodes)
-    mapping_G1 = {node: idx for idx, node in enumerate(public_transport_G.nodes)}
-    mapping_G2 = {node: idx + num_nodes_G1 for idx, node in enumerate(walk_G.nodes)}
+    num_nodes_G1 = len(public_transport_g.nodes)
+    mapping_G1 = {node: idx for idx, node in enumerate(public_transport_g.nodes)}
+    mapping_G2 = {node: idx + num_nodes_G1 for idx, node in enumerate(walk_g.nodes)}
 
-    transport: nx.MultiDiGraph = nx.relabel_nodes(public_transport_G, mapping_G1)
-    walk: nx.MultiDiGraph = nx.relabel_nodes(walk_G, mapping_G2)
+    transport= nx.relabel_nodes(public_transport_g, mapping_G1)
+    walk = nx.relabel_nodes(walk_g, mapping_G2)
 
     platforms = pd.DataFrame.from_dict(dict(transport.nodes(data=True)), orient="index")
     platforms = platforms[platforms["desc"] == "platform"]
@@ -37,9 +70,9 @@ def join_pt_walk_graph(public_transport_G: nx.Graph, walk_G: nx.Graph, max_dist=
         speed = walk.graph["walk_speed"]
     except KeyError:
         logger.warning(
-            "Нету скорости, выставляю по умолчанию 83 м/мин"
+            "There is no walk_speed in graph, set to the default speed - 83.33 m/min"
         )  # TODO посчитать примерную скорость по length timemin для любой эджи
-        speed = 83
+        speed = 83.33
 
     edges_to_del = []
 
@@ -73,15 +106,15 @@ def join_pt_walk_graph(public_transport_G: nx.Graph, walk_G: nx.Graph, max_dist=
                     u,
                     row["index"][0],
                     geometry=line1,
-                    length=round(line1.length, 3),
+                    length_meter=round(line1.length, 3),
                     time_min=round(line1.length / speed, 3),
                     type="walk",
-                )  # TODO заменить type на walk
+                )
                 walk.add_edge(
                     row["index"][0],
                     v,
                     geometry=line2,
-                    length=round(line2.length, 3),
+                    length_meter=round(line2.length, 3),
                     time_min=round(line2.length / speed, 3),
                     type="walk",
                 )
@@ -117,10 +150,10 @@ def join_pt_walk_graph(public_transport_G: nx.Graph, walk_G: nx.Graph, max_dist=
                         last_u,
                         cur_index,
                         geometry=line,
-                        length=round(line.length, 3),
+                        length_meter=round(line.length, 3),
                         time_min=round(line.length / speed, 3),
                         type="walk",
-                    )  # TODO заменить type на walk
+                    )
 
                     last_u = cur_index
                 last_dist = dist
@@ -131,7 +164,7 @@ def join_pt_walk_graph(public_transport_G: nx.Graph, walk_G: nx.Graph, max_dist=
                     last_u,
                     v,
                     geometry=line,
-                    length=round(line.length, 3),
+                    length_meter=round(line.length, 3),
                     time_min=round(line.length / speed, 3),
                     type="walk",
                 )
