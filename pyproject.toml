@@ -46,6 +46,10 @@ disable = [
     "duplicate-code",
     "missing-module-docstring",
     "missing-function-docstring",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-arguments"
 ]
 
 [tool.isort]

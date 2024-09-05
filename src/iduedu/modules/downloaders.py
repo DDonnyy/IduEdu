@@ -1,3 +1,4 @@
+# pylint: disable=missing-timeout
 import geopandas as gpd
 import osm2geojson
 import osmnx as ox
@@ -25,8 +26,7 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
         boundary = gpd.GeoDataFrame.from_features(boundary["features"]).set_crs(4326)
         poly = unary_union(boundary.geometry)
         return poly
-    else:
-        raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
+    raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
 
 
 def get_boundary_by_name(territory_name: str) -> Polygon | MultiPolygon:
@@ -46,7 +46,8 @@ def get_boundary(
     Parameters
     ----------
     osm_id : int, optional
-        OpenStreetMap ID of the territory to retrieve the boundary for. Either this or `territory_name` must be provided.
+        OpenStreetMap ID of the territory to retrieve the boundary for.
+        Either this or `territory_name` must be provided.
     territory_name : str, optional
         Name of the territory to retrieve the boundary for. Either this or `osm_id` must be provided.
     polygon : Polygon | MultiPolygon, optional
@@ -55,7 +56,8 @@ def get_boundary(
     Returns
     -------
     Polygon
-        The boundary polygon for the specified territory. If a MultiPolygon was provided, it will return the convex hull.
+        The boundary polygon for the specified territory.
+        If a MultiPolygon was provided, it will return the convex hull.
 
     Raises
     ------
@@ -98,8 +100,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
         data = pd.DataFrame(json_result)
         data["transport_type"] = public_transport_type
         return data
-    else:
-        raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
+    raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
 
 
 def get_routes_by_osm_id(osm_id, public_transport_type: str) -> pd.DataFrame:

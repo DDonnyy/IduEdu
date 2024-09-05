@@ -1,10 +1,10 @@
-from scipy.spatial import KDTree
-import pandas as pd
+import geopandas as gpd
 import networkit as nk
 import networkx as nx
-import geopandas as gpd
-from pyproj import CRS
 import numpy as np
+import pandas as pd
+from pyproj import CRS
+from scipy.spatial import KDTree
 
 
 def get_closest_nodes(gdf_from: gpd.GeoDataFrame, to_nx_graph: nx.Graph) -> list:
@@ -22,7 +22,7 @@ def get_closest_nodes(gdf_from: gpd.GeoDataFrame, to_nx_graph: nx.Graph) -> list
     coordinates = [(data["x"], data["y"]) for node, data in to_nx_graph.nodes(data=True)]
     tree = KDTree(coordinates)
     target_coord = [(p.x, p.y) for p in points]
-    distance, indices = tree.query(target_coord)
+    _, indices = tree.query(target_coord)
     return [mapping.get(x) for x in indices]
 
 
@@ -49,7 +49,7 @@ def get_adj_matrix_gdf_to_gdf(
     dtype: np.dtype = np.float16,
 ) -> pd.DataFrame:
     """
-    Compute an adjacency matrix representing the shortest path distances between two sets of geographic points (GeoDataFrames)
+    Compute an adjacency matrix representing the shortest path distances between two sets of points (GeoDataFrames)
     based on a provided graph. Distances are calculated using the specified edge weight attribute.
 
     Parameters
@@ -59,7 +59,7 @@ def get_adj_matrix_gdf_to_gdf(
     gft_to : gpd.GeoDataFrame
         The GeoDataFrame containing the destination points for the distance matrix calculation.
     to_nx_graph : nx.Graph
-        A NetworkX graph with geographic data where each edge has the specified `weight` attribute (e.g., 'length_meter').
+        A NetworkX graph with geographic data where each edge has the specified `weight` (e.g., 'length_meter').
     weight : str, optional
         The edge attribute to use for calculating the shortest paths. Defaults to 'length_meter'.
     dtype : np.dtype, optional
@@ -69,7 +69,8 @@ def get_adj_matrix_gdf_to_gdf(
     -------
     pd.DataFrame
         A DataFrame representing the adjacency matrix where rows correspond to `gdf_from` and columns to `gft_to`.
-        Each value in the matrix represents the shortest path distance between the corresponding points, based on the provided graph.
+        Each value in the matrix represents the shortest path distance between the corresponding points,
+        based on the provided graph.
 
     Raises
     ------
@@ -78,20 +79,20 @@ def get_adj_matrix_gdf_to_gdf(
 
     Notes
     -----
-    - The function computes the closest graph nodes for both `gdf_from` and `gft_to` before calculating the distance matrix.
-    - If `gdf_from` and `gft_to` are equal, the distance matrix will be square, and distances will be computed between the same sets of nodes.
+    - The function computes the closest graph nodes for both `gdf_from` and `gft_to` before calculating the matrix.
+    - If `gdf_from` and `gft_to` are equal, the distance matrix will be square.
     - Ensure that all edges in the graph have the specified `weight` attribute; otherwise, the calculation may fail.
 
     Examples
     --------
-    >>> adj_matrix = get_adj_matrix_gdf_to_gdf(origins_gdf, destinations_gdf, road_network, weight='time', dtype=np.float32)
-    >>> print(adj_matrix)
+    >>> adj_matrix = get_adj_matrix_gdf_to_gdf(origins_gdf, destinations_gdf, graph, weight='time', dtype=np.float32)
     """
 
-
-    assert (
-        gdf_from.crs == gft_to.crs == CRS.from_epsg(to_nx_graph.graph["crs"])
-    ), f'CRS mismatch, gdf_from.crs = {gdf_from.crs.to_epsg()}, gft_to.crs = {gft_to.crs.to_epsg()}, graph["crs"] = {to_nx_graph.graph["crs"]}'
+    assert gdf_from.crs == gft_to.crs == CRS.from_epsg(to_nx_graph.graph["crs"]), (
+        f"CRS mismatch, gdf_from.crs = {gdf_from.crs.to_epsg()},"
+        f" gft_to.crs = {gft_to.crs.to_epsg()},"
+        f' graph["crs"] = {to_nx_graph.graph["crs"]}'
+    )
     if gdf_from.equals(gft_to):
         closest_nodes = get_closest_nodes(gdf_from, to_nx_graph)
         adj_matrix = get_dist_matrix(to_nx_graph, closest_nodes, closest_nodes, weight, dtype)

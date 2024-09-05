@@ -2,6 +2,10 @@ from enum import Enum
 
 
 class HighwayType(Enum):
+    """
+    Enum of highway types. Properties contain registration status & max speeds
+    """
+
     MOTORWAY = "motorway"
     TRUNK = "trunk"
     PRIMARY = "primary"

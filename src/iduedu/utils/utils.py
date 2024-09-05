@@ -4,6 +4,8 @@ import numpy as np
 from loguru import logger
 from pyproj import CRS
 from pyproj.aoi import AreaOfInterest
+
+# pylint: disable=no-name-in-module
 from pyproj.database import query_utm_crs_info
 from shapely import Point, Polygon
 
@@ -23,15 +25,15 @@ def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
     return clipped
 
 
-def reproject_nx_graph(graph: nx.Graph, crs_to=None):
-    """
-
-    :param graph:
-    :param crs_to: by default None, will be determine automatically
-    :return:
-    """
-    raise NotImplemented
-    return None
+# def reproject_nx_graph(graph: nx.Graph, crs_to=None):
+#     """
+#
+#     :param graph:
+#     :param crs_to: by default None, will be determine automatically
+#     :return:
+#     """
+#     raise NotImplemented
+#     return None
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy):

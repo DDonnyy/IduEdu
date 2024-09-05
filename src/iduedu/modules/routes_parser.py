@@ -28,6 +28,7 @@ def _link_unconnected(disconnected_ways) -> list:
         return rel_point if rel_point != point else rel_point + 1
 
     connected_ways = []
+    # pylint: disable=unbalanced-tuple-unpacking
     first_con_1, first_con_2 = np.unravel_index(np.argmin(distances), distances.shape)
     distances[first_con_1, :] = np.inf
     distances[first_con_2, :] = np.inf
@@ -52,7 +53,8 @@ def _link_unconnected(disconnected_ways) -> list:
 
     extreme_points = [first_con_1_rel, first_con_2_rel]
 
-    for i in range(len(disconnected_ways) - 2):
+    for _ in range(len(disconnected_ways) - 2):
+        # pylint: disable=invalid-sequence-index
         position, ind = np.unravel_index(np.argmin(distances[extreme_points]), (2, n))
         next_con = (extreme_points[position], ind)
         rel_point = relative_point(next_con[1])
@@ -92,16 +94,14 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
     def transform_geometry(loc):
         if isinstance(loc["geometry"], float):
             return transformer.transform(loc["lon"], loc["lat"])
-        else:
-            p = LineString([transformer.transform(coords["lon"], coords["lat"]) for coords in loc["geometry"]]).centroid
-            return p.x, p.y
+        p = LineString([transformer.transform(coords["lon"], coords["lat"]) for coords in loc["geometry"]]).centroid
+        return p.x, p.y
 
     def process_roles(route, roles):
         filtered = route[route["role"].isin(roles)]
         if len(filtered) == 0:
             return None
-        else:
-            return filtered.apply(transform_geometry, axis=1).tolist()
+        return filtered.apply(transform_geometry, axis=1).tolist()
 
     if "ref" in loc["tags"].keys():
         transport_name = loc["tags"]["ref"]
@@ -148,7 +148,7 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
                 cur_way += 1
         # Соединяем линии по ближайшим точкам этих линий
         if len(connected_ways) > 1:
-            to_del = [i for i, data in enumerate(connected_ways) if (data[0] == data[-1])]
+            to_del = [i for i, data in enumerate(connected_ways) if data[0] == data[-1]]
             connected_ways = [i for j, i in enumerate(connected_ways) if j not in to_del]
         if len(connected_ways) > 1:
             connected_ways = _link_unconnected(connected_ways)
@@ -215,8 +215,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         cross_product = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
         if cross_product > 0:
             return 1
-        elif cross_product < 0:
-            return 0
+        return 0
 
     def offset_point(point, direction, distance=5):
         # для размещения платформы по одну сторону от пути на расстоянии
@@ -248,7 +247,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
 
         dist = path.project(platform)
         projected_stop = path.interpolate(dist)
-        platform_to_stop = LineString([platform, projected_stop])
+        # platform_to_stop = LineString([platform, projected_stop])
         add_node("stop", projected_stop.x, projected_stop.y, transport=True)
         if last_dist is not None:
             cur_path = substring(path, last_dist, dist)
@@ -282,7 +281,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     # Если остановок больше чем платформ - найти остановки без платформ и добавить новые платформы
     if len(stops) > len(platforms):
         stop_tree = cKDTree(stops)
-        distances, indices = stop_tree.query(platforms)
+        _, indices = stop_tree.query(platforms)
         connection = [(platforms[platform], stop) for platform, stop in enumerate(indices)]
         connection += [(-1, stop) for stop in set(range(len(stops))) ^ set(indices)]
         connection.sort(key=lambda x: x[1])
@@ -297,7 +296,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     if len(platforms) == 1:
         platform = Point(platforms[0])
         dist = path.project(platform)
-        if dist == path.length or dist == 0:  # Если платформа является конечной
+        if dist in (path.length, 0):  # Если платформа является конечной
             platforms = [offset_point(path.interpolate(0), 1, 7), offset_point(path.interpolate(path.length), 1, 7)]
         else:  # Если платформа не является конечной
             platforms = [

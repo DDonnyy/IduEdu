@@ -1,6 +1,7 @@
-from iduedu.modules.drive_walk_builder import get_walk_graph, get_drive_graph
-from iduedu.modules.intermodal_builder import get_intermodal_graph
-from iduedu.modules.matrix_builder import get_adj_matrix_gdf_to_gdf
-from iduedu.modules.pt_walk_joiner import join_pt_walk_graph
-from iduedu.modules.public_transport_builder import get_all_public_transport_graph,get_single_public_transport_graph
-from iduedu.modules.downloaders import get_boundary
+# pylint: disable=unused-import
+from .modules.downloaders import get_boundary
+from .modules.drive_walk_builder import get_drive_graph, get_walk_graph
+from .modules.intermodal_builder import get_intermodal_graph
+from .modules.matrix_builder import get_adj_matrix_gdf_to_gdf
+from .modules.pt_walk_joiner import join_pt_walk_graph
+from .modules.public_transport_builder import get_all_public_transport_graph, get_single_public_transport_graph

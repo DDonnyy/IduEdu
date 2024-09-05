@@ -1,15 +1,16 @@
+import geopandas as gpd
 import networkx as nx
 import pandas as pd
-from shapely import Point, LineString
-import geopandas as gpd
 from loguru import logger
+from shapely import LineString, Point
 from shapely.ops import substring
 
 
 def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=20) -> nx.Graph:
     """
     Combine a public transport network graph with a pedestrian network graph, creating an intermodal transport graph.
-    Platforms in the public transport network are connected to nearby pedestrian network edges based on the specified maximum distance.
+    Platforms in the public transport network are connected to nearby pedestrian network edges based on the specified
+    maximum distance.
 
     Parameters
     ----------
@@ -18,12 +19,12 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     walk_g : nx.Graph
         The pedestrian network graph. It must have the same CRS as the public transport graph.
     max_dist : float, optional
-        Maximum distance (in meters) to search for connections between platforms and pedestrian edges. Defaults to 20 meters.
+        Maximum distance (in meters) to search for connections between platforms and pedestrian edges. Defaults to 20.
 
     Returns
     -------
     nx.Graph
-        A combined intermodal transport graph where public transport platforms are connected to nearby pedestrian routes.
+        A combined intermodal graph where public transport platforms are connected to nearby pedestrian routes.
 
     Raises
     ------
@@ -37,18 +38,19 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     Notes
     -----
     The function relabels nodes in both graphs to ensure unique node IDs before composing them.
-    It connects public transport platforms to the closest edges in the pedestrian network by projecting platforms onto edges.
+    It connects public transport platforms to the closest edges in the pedestrian network by projecting platforms
+    onto edges.
     Walking speed is taken from the pedestrian graph, and default speed is set to 83.33 m/min if not available.
     """
 
     assert public_transport_g.graph["crs"] == walk_g.graph["crs"], "CRS mismatching."
     logger.info("Composing intermodal graph...")
-    num_nodes_G1 = len(public_transport_g.nodes)
-    mapping_G1 = {node: idx for idx, node in enumerate(public_transport_g.nodes)}
-    mapping_G2 = {node: idx + num_nodes_G1 for idx, node in enumerate(walk_g.nodes)}
+    num_nodes_g1 = len(public_transport_g.nodes)
+    mapping_g1 = {node: idx for idx, node in enumerate(public_transport_g.nodes)}
+    mapping_g2 = {node: idx + num_nodes_g1 for idx, node in enumerate(walk_g.nodes)}
 
-    transport= nx.relabel_nodes(public_transport_g, mapping_G1)
-    walk = nx.relabel_nodes(walk_g, mapping_G2)
+    transport = nx.relabel_nodes(public_transport_g, mapping_g1)
+    walk = nx.relabel_nodes(walk_g, mapping_g2)
 
     platforms = pd.DataFrame.from_dict(dict(transport.nodes(data=True)), orient="index")
     platforms = platforms[platforms["desc"] == "platform"]

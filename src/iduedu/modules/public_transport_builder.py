@@ -3,17 +3,19 @@ import multiprocessing
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
+from loguru import logger
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
-from loguru import logger
-from .downloaders import (
-    get_routes_by_poly,
-    get_boundary,
-)
-from iduedu.modules.routes_parser import parse_overpass_to_edgenode
+
 from iduedu.enums.pt_enums import PublicTrasport
+from iduedu.modules.routes_parser import parse_overpass_to_edgenode
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds
+
+from .downloaders import (
+    get_boundary,
+    get_routes_by_poly,
+)
 
 
 def graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
@@ -82,12 +84,12 @@ def _multi_process_row(args):
 
 
 def get_single_public_transport_graph(
-        public_transport_type: str | PublicTrasport,
-        osm_id: int | None = None,
-        territory_name: str | None = None,
-        polygon: Polygon | MultiPolygon | None = None,
-        clip_by_bounds: bool = False,
-        keep_geometry: bool = True,
+    public_transport_type: str | PublicTrasport,
+    osm_id: int | None = None,
+    territory_name: str | None = None,
+    polygon: Polygon | MultiPolygon | None = None,
+    clip_by_bounds: bool = False,
+    keep_geometry: bool = True,
 ):
     """
     Generate a graph of a specific type of public transport network within a given territory or polygon.
@@ -126,11 +128,11 @@ def get_single_public_transport_graph(
     --------
     >>> bus_graph = get_single_public_transport_graph(public_transport_type="bus", osm_id=1114252)
     >>> tram_graph = get_single_public_transport_graph(territory_name="Санкт-Петербург", public_transport_type="tram")
-    >>> metro_graph = get_single_public_transport_graph(polygon=some_polygon, public_transport_type="subway", clip_by_bounds=True)
+    >>> metro_graph = get_single_public_transport_graph(polygon=poly, public_transport_type="bus", clip_by_bounds=True)
 
     Notes
     -----
-    The function uses OpenStreetMap (OSM) data and processes public transport routes in parallel if a large number of routes are found.
+    The function uses OpenStreetMap data and processes public transport routes in parallel.
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
 
@@ -154,7 +156,7 @@ def get_single_public_transport_graph(
             lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
         ).tolist()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-    to_return = graph_data_to_nx(graph_df,keep_geometry=keep_geometry)
+    to_return = graph_data_to_nx(graph_df, keep_geometry=keep_geometry)
     to_return.graph["crs"] = local_crs
     if clip_by_bounds:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
@@ -170,7 +172,7 @@ def get_all_public_transport_graph(
     keep_geometry: bool = True,
 ) -> nx.Graph:
     """
-    Generate a public transport network graph that includes all available types of transport within a specified territory or polygon.
+    Generate a public transport network graph that includes all types of transport within a specified territory.
     The graph can optionally be clipped by bounds and retain original geometries.
 
     Parameters
@@ -189,7 +191,7 @@ def get_all_public_transport_graph(
     Returns
     -------
     networkx.Graph
-        A public transport network graph for all transport types (e.g., bus, tram, subway) in the specified territory or polygon.
+        A public transport network graph for all transport types (e.g., bus, tram, subway) in the specified territory.
 
     Raises
     ------
@@ -208,7 +210,7 @@ def get_all_public_transport_graph(
 
     Notes
     -----
-    This function retrieves routes for all public transport types using OpenStreetMap (OSM) data and processes them in parallel if necessary.
+    This function retrieves routes for all public transport types using OpenStreetMap data.
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
 
@@ -238,9 +240,9 @@ def get_all_public_transport_graph(
             lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
         ).tolist()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-    to_return = graph_data_to_nx(graph_df,keep_geometry=keep_geometry)
+    to_return = graph_data_to_nx(graph_df, keep_geometry=keep_geometry)
     to_return.graph["crs"] = local_crs
     if clip_by_bounds:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
-        return clip_nx_graph(to_return, polygon)
+        to_return = clip_nx_graph(to_return, polygon)
     return to_return

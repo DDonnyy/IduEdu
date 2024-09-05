@@ -4,5 +4,6 @@ src/tests
 /.idea
 /.venv
 /.vscode
+/dev
 /poetry.lock
 __pycache__

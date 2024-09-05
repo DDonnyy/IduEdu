@@ -11,7 +11,7 @@ from iduedu.enums.drive_enums import HighwayType
 from iduedu.modules.downloaders import get_boundary
 from iduedu.utils.utils import estimate_crs_for_bounds
 
-base_filter = (
+BASE_FILTER = (
     "['highway'~'motorway|trunk|primary|secondary|tertiary|unclassified|residential|motorway_link"
     "|trunk_link|primary_link|secondary_link|tertiary_link|living_street']"
 )
@@ -39,44 +39,42 @@ def determine_reg(name_roads, highway_type=None) -> int:
         for item in name_roads:
             if re.match(r"^[МАР]", str(item)):
                 return 1
-            elif re.match(r"^\d.*[A-Za-zА-Яа-я]", str(item)):
+            if re.match(r"^\d.*[A-Za-zА-Яа-я]", str(item)):
                 return 2
         return 3
-    elif pd.isna(name_roads):
+    if pd.isna(name_roads):
         # Выставление значения по типу дороги, если значение NaN
         if highway_type:
             return highway_type_to_reg(highway_type)
         return 3
     if re.match(r"^[МАР]", str(name_roads)):
         return 1
-    elif re.match(r"^\d.*[A-Za-zА-Яа-я]", str(name_roads)):
+    if re.match(r"^\d.*[A-Za-zА-Яа-я]", str(name_roads)):
         return 2
-    else:
-        return 3
+    return 3
 
 
 def get_max_speed(highway_types) -> float:
     """
-       Determine the speed based on road_name.
+    Determine the speed based on road_name.
     """
     # Проверяем, является ли highway_types списком.
     try:
 
         if isinstance(highway_types, list):
-            return max([HighwayType[ht.upper()].max_speed for ht in highway_types])
-        else:
-            return HighwayType[highway_types.upper()].max_speed
+            return max(HighwayType[ht.upper()].max_speed for ht in highway_types)
+        return HighwayType[highway_types.upper()].max_speed
     except KeyError:
         return 40 * 1000 / 60
 
 
 def get_drive_graph_by_poly(
-    polygon: Polygon | MultiPolygon, additional_edgedata=None, filter: str = None
+    polygon: Polygon | MultiPolygon, additional_edgedata=None, road_filter: str = None
 ) -> nx.MultiDiGraph:
     if additional_edgedata is None:
         additional_edgedata = []
-    if not filter:
-        filter = base_filter
+    if not road_filter:
+        road_filter = BASE_FILTER
     if isinstance(polygon, MultiPolygon):
         polygon = unary_union(polygon)
         if isinstance(polygon, MultiPolygon):
@@ -85,7 +83,7 @@ def get_drive_graph_by_poly(
     graph = ox.graph_from_polygon(
         polygon,
         network_type="drive",
-        custom_filter=filter,
+        custom_filter=road_filter,
         truncate_by_edge=False,
     )
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
@@ -101,7 +99,7 @@ def get_drive_graph_by_poly(
     nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
     edges.to_crs(local_crs, inplace=True)
 
-    edges["maxspeed"] = edges["highway"].apply(lambda x: get_max_speed(x))
+    edges["maxspeed"] = edges["highway"].apply(get_max_speed)
 
     edges[["length_meter", "time_min"]] = edges.apply(
         lambda row: (round(row.geometry.length, 3), round(row.geometry.length / row.maxspeed, 3)),
@@ -175,7 +173,8 @@ def get_walk_graph(
     Parameters
     ----------
     osm_id : int, optional
-        OpenStreetMap ID of the territory to build the walking graph for. Either this or `territory_name` must be provided.
+        OpenStreetMap ID of the territory to build the walking graph for.
+        Either this or `territory_name` must be provided.
     territory_name : str, optional
         Name of the territory to build the walking graph for. Either this or `osm_id` must be provided.
     polygon : Polygon | MultiPolygon, optional
@@ -201,11 +200,11 @@ def get_walk_graph(
 
     polygon = get_boundary(osm_id, territory_name, polygon)
 
-    logger.debug(f"Downloading walk graph from OSM ...")
+    logger.debug("Downloading walk graph from OSM ...")
     graph = ox.graph_from_polygon(polygon, network_type="walk", truncate_by_edge=False, simplify=True)
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
-    logger.debug(f"Calculating the weights of the graph ...")
+    logger.debug("Calculating the weights of the graph ...")
     nodes, edges = ox.graph_to_gdfs(graph)
     nodes.to_crs(local_crs, inplace=True)
     nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
