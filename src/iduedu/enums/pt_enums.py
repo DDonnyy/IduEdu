@@ -12,21 +12,11 @@ class PublicTrasport(Enum):
     TROLLEYBUS = "trolleybus"
 
     @property
-    def russian_name(self) -> str:
-        names = {
-            PublicTrasport.SUBWAY: "Метро",
-            PublicTrasport.BUS: "Автобус",
-            PublicTrasport.TRAM: "Трамвай",
-            PublicTrasport.TROLLEYBUS: "Троллейбус",
-        }
-        return names[self]
-
-    @property
     def avg_speed(self) -> float:
         """
         Average speed in m/min.
         """
-        speeds = {
+        speeds = {  # km/h
             PublicTrasport.SUBWAY: 40,
             PublicTrasport.BUS: 20,
             PublicTrasport.TRAM: 20,

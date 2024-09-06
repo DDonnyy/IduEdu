@@ -4,17 +4,17 @@ import geopandas as gpd
 import networkx as nx
 import osmnx as ox
 import pandas as pd
-from loguru import logger
 from shapely import MultiPolygon, Polygon, unary_union
+from tqdm.auto import tqdm
 
+from iduedu import config
 from iduedu.enums.drive_enums import HighwayType
 from iduedu.modules.downloaders import get_boundary
 from iduedu.utils.utils import estimate_crs_for_bounds
 
-BASE_FILTER = (
-    "['highway'~'motorway|trunk|primary|secondary|tertiary|unclassified|residential|motorway_link"
-    "|trunk_link|primary_link|secondary_link|tertiary_link|living_street']"
-)
+logger = config.logger
+
+BASE_FILTER = "['highway'~'" + "|".join([h.value for h in HighwayType]) + "']"
 
 
 def highway_type_to_reg(highway_type) -> int:
@@ -60,9 +60,19 @@ def get_max_speed(highway_types) -> float:
     """
     # Проверяем, является ли highway_types списком.
     try:
-
         if isinstance(highway_types, list):
-            return max(HighwayType[ht.upper()].max_speed for ht in highway_types)
+            max_speeds = []
+            for ht in highway_types:
+                try:
+                    highway_enum = HighwayType[ht.upper()]
+                    max_speeds.append(highway_enum.max_speed)
+                except KeyError:
+                    logger.debug(f"{ht} not found in HighwayType enum, skipping.")
+            if max_speeds:
+                return max(max_speeds)
+            else:
+                logger.debug("No valid highway types provided, returning 40 km/h.")
+                return 40 * 1000 / 60
         return HighwayType[highway_types.upper()].max_speed
     except KeyError:
         return 40 * 1000 / 60
@@ -113,6 +123,7 @@ def get_drive_graph_by_poly(
     edges.set_index(["u", "v", "key"], inplace=True)
     graph = ox.graph_from_gdfs(nodes, edges)
     graph.graph["crs"] = local_crs
+    logger.debug('Done!')
     return graph
 
 
@@ -204,15 +215,14 @@ def get_walk_graph(
     graph = ox.graph_from_polygon(polygon, network_type="walk", truncate_by_edge=False, simplify=True)
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
-    logger.debug("Calculating the weights of the graph ...")
     nodes, edges = ox.graph_to_gdfs(graph)
     nodes.to_crs(local_crs, inplace=True)
     nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
     nodes = nodes[["x", "y"]]
     edges.reset_index(inplace=True)
     edges.to_crs(local_crs, inplace=True)
-
-    edges[["length_meter", "time_min"]] = edges.apply(
+    tqdm.pandas(desc="Calculating the weights of the graph ...", disable=not config.enable_tqdm_bar)
+    edges[["length_meter", "time_min"]] = edges.progress_apply(
         lambda row: (round(row.geometry.length, 3), round(row.geometry.length / walk_speed, 3)),
         axis=1,
         result_type="expand",
@@ -233,4 +243,5 @@ def get_walk_graph(
     graph = ox.graph_from_gdfs(nodes, edges)
     graph.graph["crs"] = local_crs
     graph.graph["walk_speed"] = walk_speed
+    logger.debug('Done!')
     return graph

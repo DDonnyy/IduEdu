@@ -1,20 +1,23 @@
 import concurrent.futures
 
 import networkx as nx
-from loguru import logger
 from shapely import MultiPolygon, Polygon
 
+from iduedu import config
 from iduedu.modules.downloaders import get_boundary
 from iduedu.modules.drive_walk_builder import get_walk_graph
 from iduedu.modules.pt_walk_joiner import join_pt_walk_graph
 from iduedu.modules.public_transport_builder import get_all_public_transport_graph
+
+logger = config.logger
 
 
 def get_intermodal_graph(
     osm_id: int | None = None,
     territory_name: str | None = None,
     polygon: Polygon | MultiPolygon | None = None,
-    clip_by_bounds=False,
+    clip_by_bounds: bool = False,
+    keep_routes_geom: bool = True,
 ) -> nx.Graph:
     """
     Generate an intermodal transport graph that combines public transport and pedestrian networks,
@@ -31,6 +34,7 @@ def get_intermodal_graph(
         A custom polygon or MultiPolygon defining the area for the intermodal network. Must be in CRS 4326.
     clip_by_bounds : bool, optional
         If True, clips the public transport network to the bounds of the provided polygon. Defaults to False.
+    keep_routes_geom : bool, optional
 
     Returns
     -------
@@ -65,7 +69,10 @@ def get_intermodal_graph(
         walk_graph_future = executor.submit(get_walk_graph, polygon=boundary)
         logger.debug("Started downloading and parsing walk graph...")
         pt_graph_future = executor.submit(
-            get_all_public_transport_graph, polygon=boundary, clip_by_bounds=clip_by_bounds
+            get_all_public_transport_graph,
+            polygon=boundary,
+            clip_by_bounds=clip_by_bounds,
+            keep_geometry=keep_routes_geom,
         )
         logger.debug("Started downloading and parsing public trasport graph...")
         pt_g = pt_graph_future.result()

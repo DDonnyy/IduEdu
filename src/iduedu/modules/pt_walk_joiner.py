@@ -1,9 +1,12 @@
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
-from loguru import logger
 from shapely import LineString, Point
 from shapely.ops import substring
+
+from iduedu import config
+
+logger = config.logger
 
 
 def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=20) -> nx.Graph:

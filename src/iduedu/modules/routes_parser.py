@@ -247,7 +247,6 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
 
         dist = path.project(platform)
         projected_stop = path.interpolate(dist)
-        # platform_to_stop = LineString([platform, projected_stop])
         add_node("stop", projected_stop.x, projected_stop.y, transport=True)
         if last_dist is not None:
             cur_path = substring(path, last_dist, dist)
@@ -256,8 +255,6 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
 
         node_id += 1
         add_node("platform", platform.x, platform.y)
-        # add_edge(node_id - 1, node_id, geometry=platform_to_stop)
-        # add_edge(node_id, node_id - 1, geometry=platform_to_stop)
         add_edge(node_id - 1, node_id, geometry=None)
         add_edge(node_id, node_id - 1, geometry=None)
         node_id += 1

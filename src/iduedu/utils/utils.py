@@ -11,29 +11,12 @@ from shapely import Point, Polygon
 
 
 def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
-    """
-
-    :param graph:
-    :param polygon: should be in same crs as coordinates in graph
-    :return:
-    """
     crs = graph.graph["crs"]
     points = gpd.GeoDataFrame(
         data=[{"id": p_id, "geometry": Point(data["x"], data["y"])} for p_id, data in graph.nodes(data=True)], crs=crs
     ).clip(polygon, True)
     clipped = graph.subgraph(points["id"].tolist())
     return clipped
-
-
-# def reproject_nx_graph(graph: nx.Graph, crs_to=None):
-#     """
-#
-#     :param graph:
-#     :param crs_to: by default None, will be determine automatically
-#     :return:
-#     """
-#     raise NotImplemented
-#     return None
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy):
@@ -49,5 +32,5 @@ def estimate_crs_for_bounds(minx, miny, maxx, maxy):
         ),
     )
     crs = CRS.from_epsg(utm_crs_list[0].code)
-    logger.info(f"Estimated CRS for territory {crs}")
+    logger.debug(f"Estimated CRS for territory {crs}")
     return crs

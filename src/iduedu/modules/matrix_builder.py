@@ -6,14 +6,12 @@ import pandas as pd
 from pyproj import CRS
 from scipy.spatial import KDTree
 
+from iduedu import config
 
-def get_closest_nodes(gdf_from: gpd.GeoDataFrame, to_nx_graph: nx.Graph) -> list:
-    """
+logger = config.logger
 
-    :param gdf_from:
-    :param to_nx_graph:
-    :return: list of closest nodes in nx_graph to all object's representative points
-    """
+
+def get_closest_nodes(gdf_from: gpd.GeoDataFrame, to_nx_graph: nx.Graph):
     assert gdf_from.crs == CRS.from_epsg(
         to_nx_graph.graph["crs"]
     ), f'CRS mismatch , gdf_from.crs = {gdf_from.crs.to_epsg()}, graph["crs"] = {to_nx_graph.graph["crs"]}'
@@ -37,7 +35,6 @@ def get_dist_matrix(graph: nx.Graph, nodes_from: [], nodes_to: [], weight: str, 
     spsp.setTargets(targets=[mapping.get(x) for x in nodes_to])
     spsp.run()
     distance_matrix = pd.DataFrame(spsp.getDistances(asarray=True), index=nodes_from, columns=nodes_to, dtype=dtype)
-    del spsp
     return distance_matrix
 
 

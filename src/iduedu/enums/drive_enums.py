@@ -1,4 +1,15 @@
 from enum import Enum
+from typing import Literal
+
+
+class RegistrationStatus(Enum):
+    """
+    Enum for registration status of the road.
+    """
+
+    FEDERAL = 1
+    REGIONAL = 2
+    LOCAL = 3
 
 
 class HighwayType(Enum):
@@ -21,26 +32,29 @@ class HighwayType(Enum):
     LIVING_STREET = "living_street"
 
     @property
-    def reg_status(self):
-        reg_status = {  # 1 - federal , 2 - regional 3 - local
-            HighwayType.MOTORWAY: 1,
-            HighwayType.TRUNK: 1,
-            HighwayType.PRIMARY: 2,
-            HighwayType.SECONDARY: 2,
-            HighwayType.TERTIARY: 3,
-            HighwayType.UNCLASSIFIED: 3,
-            HighwayType.RESIDENTIAL: 3,
-            HighwayType.MOTORWAY_LINK: 1,
-            HighwayType.TRUNK_LINK: 1,
-            HighwayType.PRIMARY_LINK: 2,
-            HighwayType.SECONDARY_LINK: 2,
-            HighwayType.TERTIARY_LINK: 3,
-            HighwayType.LIVING_STREET: 3,
+    def reg_status(self) -> Literal[1, 2, 3]:
+        reg_status = {
+            HighwayType.MOTORWAY: RegistrationStatus.FEDERAL,
+            HighwayType.TRUNK: RegistrationStatus.FEDERAL,
+            HighwayType.PRIMARY: RegistrationStatus.REGIONAL,
+            HighwayType.SECONDARY: RegistrationStatus.REGIONAL,
+            HighwayType.TERTIARY: RegistrationStatus.LOCAL,
+            HighwayType.UNCLASSIFIED: RegistrationStatus.LOCAL,
+            HighwayType.RESIDENTIAL: RegistrationStatus.LOCAL,
+            HighwayType.MOTORWAY_LINK: RegistrationStatus.FEDERAL,
+            HighwayType.TRUNK_LINK: RegistrationStatus.FEDERAL,
+            HighwayType.PRIMARY_LINK: RegistrationStatus.REGIONAL,
+            HighwayType.SECONDARY_LINK: RegistrationStatus.REGIONAL,
+            HighwayType.TERTIARY_LINK: RegistrationStatus.LOCAL,
+            HighwayType.LIVING_STREET: RegistrationStatus.LOCAL,
         }
-        return reg_status[self]
+        return reg_status[self].value
 
     @property
-    def max_speed(self):
+    def max_speed(self) -> float:
+        """
+        Average speed in m/min.
+        """
         speeds = {  # km/h
             HighwayType.MOTORWAY: 110,
             HighwayType.TRUNK: 90,

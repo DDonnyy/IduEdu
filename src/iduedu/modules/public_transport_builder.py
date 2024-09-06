@@ -3,11 +3,11 @@ import multiprocessing
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
-from loguru import logger
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
 
+from iduedu._config import config
 from iduedu.enums.pt_enums import PublicTrasport
 from iduedu.modules.routes_parser import parse_overpass_to_edgenode
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds
@@ -16,6 +16,8 @@ from .downloaders import (
     get_boundary,
     get_routes_by_poly,
 )
+
+logger = config.logger
 
 
 def graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
@@ -149,9 +151,15 @@ def get_single_public_transport_graph(
         n_cpus = multiprocessing.cpu_count()
         rows = [(row, local_crs) for _, row in overpass_data.iterrows()]
         chunksize = max(1, len(rows) // n_cpus)
-        edgenode_for_routes = process_map(_multi_process_row, rows, desc="Parsing routes", chunksize=chunksize)
+        if not config.enable_tqdm_bar:
+            logger.debug("Parsing routes")
+        edgenode_for_routes = process_map(
+            _multi_process_row, rows, desc="Parsing routes", chunksize=chunksize, disable=not config.enable_tqdm_bar
+        )
     else:
-        tqdm.pandas(desc="Parsing routes data")
+        if not config.enable_tqdm_bar:
+            logger.debug("Parsing routes")
+        tqdm.pandas(desc="Parsing routes data", disable=not config.enable_tqdm_bar)
         edgenode_for_routes = overpass_data.progress_apply(
             lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
         ).tolist()
@@ -161,6 +169,7 @@ def get_single_public_transport_graph(
     if clip_by_bounds:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
         return clip_nx_graph(to_return, polygon)
+    logger.debug('Done!')
     return to_return
 
 
@@ -218,9 +227,13 @@ def get_all_public_transport_graph(
 
     transports = [transport.value for transport in PublicTrasport]
     args_list = [(polygon, transport) for transport in transports]
-
+    if not config.enable_tqdm_bar:
+        logger.debug("Downloading routes")
     overpass_data = pd.concat(
-        process_map(_get_multi_routes_by_poly, args_list, desc="Downloading routes"), ignore_index=True
+        process_map(
+            _get_multi_routes_by_poly, args_list, desc="Downloading routes", disable=not config.enable_tqdm_bar
+        ),
+        ignore_index=True,
     ).reset_index(drop=True)
     if overpass_data.shape[0] == 0:
         logger.warning("No routes found for public transport.")
@@ -231,11 +244,15 @@ def get_all_public_transport_graph(
         rows = [(row, local_crs) for _, row in overpass_data.iterrows()]
         n_cpus = multiprocessing.cpu_count()
         chunksize = max(1, len(rows) // n_cpus)
-        edgenode_for_routes = process_map(_multi_process_row, rows, desc="Parsing routes", chunksize=chunksize)
-        # pandarallel usecase
-        # edgenode_for_routes = overpass_data.parallel_apply(lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1)
+        if not config.enable_tqdm_bar:
+            logger.debug("Parsing routes")
+        edgenode_for_routes = process_map(
+            _multi_process_row, rows, desc="Parsing routes", chunksize=chunksize, disable=not config.enable_tqdm_bar
+        )
     else:
-        tqdm.pandas(desc="Parsing routes data...")
+        if not config.enable_tqdm_bar:
+            logger.debug("Parsing routes")
+        tqdm.pandas(desc="Parsing routes", disable=not config.enable_tqdm_bar)
         edgenode_for_routes = overpass_data.progress_apply(
             lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
         ).tolist()
@@ -245,4 +262,5 @@ def get_all_public_transport_graph(
     if clip_by_bounds:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).unary_union
         to_return = clip_nx_graph(to_return, polygon)
+    logger.debug('Done!')
     return to_return

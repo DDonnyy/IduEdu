@@ -1,13 +1,25 @@
-# pylint: disable=missing-timeout
 import geopandas as gpd
 import osm2geojson
 import osmnx as ox
 import pandas as pd
 import requests
-from loguru import logger
 from shapely import MultiPolygon, Polygon, unary_union
 
-OVERPASS_URL = "http://lz4.overpass-api.de/api/interpreter"
+from iduedu._config import config
+
+logger = config.logger
+
+
+class RequestError(RuntimeError):
+    def __init__(self, message, status_code=None, reason=None, response_text=None, response_content=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.reason = reason
+        self.response_text = response_text
+        self.response_content = response_content
+
+    def __str__(self):
+        return f"{super().__str__()} (status: {self.status_code}, reason: {self.reason})"
 
 
 def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
@@ -19,18 +31,23 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
             out geom;
             """
     logger.debug(f"Downloading territory bounds with osm_id <{osm_id}> ...")
-    result = requests.get(OVERPASS_URL, params={"data": overpass_query})
+    result = requests.get(config.overpass_url, params={"data": overpass_query}, timeout=config.timeout)
     if result.status_code == 200:
         json_result = result.json()
         boundary = osm2geojson.json2geojson(json_result)
         boundary = gpd.GeoDataFrame.from_features(boundary["features"]).set_crs(4326)
         poly = unary_union(boundary.geometry)
         return poly
-    raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
+    raise RequestError(
+        message=f"Request failed with status code {result.status_code}, reason: {result.reason}",
+        status_code=result.status_code,
+        reason=result.reason,
+        response_text=result.text,
+        response_content=result.content,
+    )
 
 
 def get_boundary_by_name(territory_name: str) -> Polygon | MultiPolygon:
-    # logger.info(f"Retrieving polygon geometry for '{territory_name}'")
     logger.debug(f"Downloading territory bounds with name <{territory_name}> ...")
     place = ox.geocode_to_gdf(territory_name)
     return unary_union(place.geometry)
@@ -94,25 +111,16 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
         out geom;
         """
     logger.debug(f"Downloading routes from OSM with type <{public_transport_type}> ...")
-    result = requests.post(OVERPASS_URL, data={"data": overpass_query})
+    result = requests.post(config.overpass_url, data={"data": overpass_query}, timeout=config.timeout)
     if result.status_code == 200:
         json_result = result.json()["elements"]
         data = pd.DataFrame(json_result)
         data["transport_type"] = public_transport_type
         return data
-    raise RuntimeError(f"Request failed with status code {result.status_code}, reason: {result.reason}")
-
-
-def get_routes_by_osm_id(osm_id, public_transport_type: str) -> pd.DataFrame:
-    boundary = get_boundary_by_osm_id(osm_id)
-    if isinstance(boundary, MultiPolygon):
-        boundary = boundary.convex_hull
-    return get_routes_by_poly(boundary, public_transport_type)
-
-
-def get_routes_by_terr_name(terr_name: str, public_transport_type: str) -> pd.DataFrame:
-    boundary = get_boundary_by_name(terr_name)
-
-    if isinstance(boundary, MultiPolygon):
-        boundary = boundary.convex_hull
-    return get_routes_by_poly(boundary, public_transport_type)
+    raise RequestError(
+        message=f"Request failed with status code {result.status_code}, reason: {result.reason}",
+        status_code=result.status_code,
+        reason=result.reason,
+        response_text=result.text,
+        response_content=result.content,
+    )
