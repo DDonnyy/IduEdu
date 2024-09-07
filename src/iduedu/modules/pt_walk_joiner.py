@@ -175,5 +175,6 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
                 )
     walk.remove_edges_from(edges_to_del)
     intermodal = nx.compose(nx.MultiDiGraph(transport), nx.MultiDiGraph(walk))
+    intermodal.graph["type"] = "intermodal"
     logger.info("Done composing!")
     return intermodal
