@@ -5,7 +5,7 @@ import pandas as pd
 import requests
 from shapely import MultiPolygon, Polygon, unary_union
 
-from iduedu._config import config
+from iduedu import config
 
 logger = config.logger
 

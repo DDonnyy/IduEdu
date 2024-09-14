@@ -7,7 +7,7 @@ from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
 
-from iduedu._config import config
+from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
 from iduedu.modules.routes_parser import parse_overpass_to_edgenode
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds

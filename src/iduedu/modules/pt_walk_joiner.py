@@ -47,7 +47,7 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     """
 
     assert public_transport_g.graph["crs"] == walk_g.graph["crs"], "CRS mismatching."
-    logger.info("Composing intermodal graph...")
+    logger.debug("Composing intermodal graph...")
     num_nodes_g1 = len(public_transport_g.nodes)
     mapping_g1 = {node: idx for idx, node in enumerate(public_transport_g.nodes)}
     mapping_g2 = {node: idx + num_nodes_g1 for idx, node in enumerate(walk_g.nodes)}
@@ -176,5 +176,5 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     walk.remove_edges_from(edges_to_del)
     intermodal = nx.compose(nx.MultiDiGraph(transport), nx.MultiDiGraph(walk))
     intermodal.graph["type"] = "intermodal"
-    logger.info("Done composing!")
+    logger.debug("Done composing!")
     return intermodal

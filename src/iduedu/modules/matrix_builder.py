@@ -41,7 +41,7 @@ def get_dist_matrix(graph: nx.Graph, nodes_from: [], nodes_to: [], weight: str, 
 def get_adj_matrix_gdf_to_gdf(
     gdf_from: gpd.GeoDataFrame,
     gft_to: gpd.GeoDataFrame,
-    to_nx_graph: nx.Graph,
+    nx_graph: nx.Graph,
     weight: str = "length_meter",
     dtype: np.dtype = np.float16,
 ) -> pd.DataFrame:
@@ -85,20 +85,20 @@ def get_adj_matrix_gdf_to_gdf(
     >>> adj_matrix = get_adj_matrix_gdf_to_gdf(origins_gdf, destinations_gdf, graph, weight='time', dtype=np.float32)
     """
 
-    assert gdf_from.crs == gft_to.crs == CRS.from_epsg(to_nx_graph.graph["crs"]), (
+    assert gdf_from.crs == gft_to.crs == CRS.from_epsg(nx_graph.graph["crs"]), (
         f"CRS mismatch, gdf_from.crs = {gdf_from.crs.to_epsg()},"
         f" gft_to.crs = {gft_to.crs.to_epsg()},"
-        f' graph["crs"] = {to_nx_graph.graph["crs"]}'
+        f' graph["crs"] = {nx_graph.graph["crs"]}'
     )
     if gdf_from.equals(gft_to):
-        closest_nodes = get_closest_nodes(gdf_from, to_nx_graph)
-        adj_matrix = get_dist_matrix(to_nx_graph, closest_nodes, closest_nodes, weight, dtype)
+        closest_nodes = get_closest_nodes(gdf_from, nx_graph)
+        adj_matrix = get_dist_matrix(nx_graph, closest_nodes, closest_nodes, weight, dtype)
         adj_matrix.columns = gdf_from.index
         adj_matrix.index = gdf_from.index
         return adj_matrix
-    closest_nodes_from = get_closest_nodes(gdf_from, to_nx_graph)
-    closest_nodes_to = get_closest_nodes(gft_to, to_nx_graph)
-    adj_matrix = get_dist_matrix(to_nx_graph, closest_nodes_from, closest_nodes_to, weight, dtype)
+    closest_nodes_from = get_closest_nodes(gdf_from, nx_graph)
+    closest_nodes_to = get_closest_nodes(gft_to, nx_graph)
+    adj_matrix = get_dist_matrix(nx_graph, closest_nodes_from, closest_nodes_to, weight, dtype)
     adj_matrix.columns = gft_to.index
     adj_matrix.index = gdf_from.index
     return adj_matrix

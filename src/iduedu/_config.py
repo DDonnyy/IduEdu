@@ -57,3 +57,4 @@ class Config:
 
 
 config = Config()
+config.change_logger_lvl("INFO")
