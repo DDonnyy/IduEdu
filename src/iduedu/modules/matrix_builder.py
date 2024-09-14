@@ -55,7 +55,7 @@ def get_adj_matrix_gdf_to_gdf(
         The GeoDataFrame containing the origin points for the distance matrix calculation.
     gft_to : gpd.GeoDataFrame
         The GeoDataFrame containing the destination points for the distance matrix calculation.
-    to_nx_graph : nx.Graph
+    nx_graph : nx.Graph
         A NetworkX graph with geographic data where each edge has the specified `weight` (e.g., 'length_meter').
     weight : str, optional
         The edge attribute to use for calculating the shortest paths. Defaults to 'length_meter'.
