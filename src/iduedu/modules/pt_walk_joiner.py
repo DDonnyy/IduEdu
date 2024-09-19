@@ -175,6 +175,13 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
                 )
     walk.remove_edges_from(edges_to_del)
     intermodal = nx.compose(nx.MultiDiGraph(transport), nx.MultiDiGraph(walk))
+    island_count = nx.number_weakly_connected_components(intermodal)
+    if island_count > 1:
+        logger.warning(
+            f"Weakly connected components detected. Graph islands count: {island_count}."
+            f" This may affect further calculations."
+            f" You may want to try adjusting the max_dist parameter when calling the function."
+        )
     intermodal.graph["type"] = "intermodal"
     logger.debug("Done composing!")
     return intermodal
