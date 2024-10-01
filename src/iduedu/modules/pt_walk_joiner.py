@@ -47,7 +47,7 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     """
 
     assert public_transport_g.graph["crs"] == walk_g.graph["crs"], "CRS mismatching."
-    logger.debug("Composing intermodal graph...")
+    logger.info("Composing intermodal graph...")
     num_nodes_g1 = len(public_transport_g.nodes)
     mapping_g1 = {node: idx for idx, node in enumerate(public_transport_g.nodes)}
     mapping_g2 = {node: idx + num_nodes_g1 for idx, node in enumerate(walk_g.nodes)}
@@ -177,10 +177,10 @@ def join_pt_walk_graph(public_transport_g: nx.Graph, walk_g: nx.Graph, max_dist=
     intermodal = nx.compose(nx.MultiDiGraph(transport), nx.MultiDiGraph(walk))
     island_count = nx.number_weakly_connected_components(intermodal)
     if island_count > 1:
-        logger.warning( #TODO REWRITE WARN
-            f"Weakly connected components detected. Graph islands count: {island_count}."
-            f" This may affect further calculations."
-            f" You may want to try adjusting the max_dist parameter when calling the function."
+        logger.warning(
+            f"Weakly connected components detected. {island_count} graph islands were removed. "
+            f"These are probably pt routes that are not connected to walking routes. "
+            f"You may try adjusting the max_dist parameter, but this can lead to incorrect data."
         )
     intermodal.remove_nodes_from([node for node, data in intermodal.nodes(data=True) if "x" not in data.keys()])
     components = sorted(nx.strongly_connected_components(intermodal), key=len)

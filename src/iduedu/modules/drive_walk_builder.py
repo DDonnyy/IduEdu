@@ -88,7 +88,7 @@ def get_drive_graph_by_poly(
         polygon = unary_union(polygon)
         if isinstance(polygon, MultiPolygon):
             polygon = polygon.convex_hull
-
+    logger.info("Downloading drive graph from OSM, it may take a while for large territory ...")
     graph = ox.graph_from_polygon(
         polygon,
         network_type="drive",
@@ -211,7 +211,7 @@ def get_walk_graph(
 
     polygon = get_boundary(osm_id, territory_name, polygon)
 
-    logger.debug("Downloading walk graph from OSM ...")
+    logger.info("Downloading walk graph from OSM, it may take a while for large territory ...")
     graph = ox.graph_from_polygon(polygon, network_type="walk", truncate_by_edge=False, simplify=True)
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
