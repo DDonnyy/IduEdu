@@ -34,7 +34,7 @@ def _nodes_to_gdf(G: nx.MultiDiGraph, crs: int) -> gpd.GeoDataFrame:
 
 def graph_to_gdf(
         G: nx.MultiDiGraph,
-        crs: int,
+        crs: int | None = None,
         edges: bool = True,
         nodes: bool = True,
 ) -> gpd.GeoDataFrame | None:
@@ -57,7 +57,11 @@ def graph_to_gdf(
     gpd.GeoDataFrame
         Graph representation in GeoDataFrame format
     """
-
+    if crs is None:
+        try:
+            crs = G.graph['crs']
+        except:
+            raise ValueError("Graph does not have crs attribute and no crs was provided")
     if not edges and not nodes:
         logger.debug("Neither edges or nodes were selected, graph_to_gdf returning None")
         return None
