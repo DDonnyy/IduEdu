@@ -1,7 +1,9 @@
 import networkx as nx
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 from loguru import logger
+from shapely import LineString
 from shapely.geometry.point import Point
 
 
@@ -10,44 +12,24 @@ def _edges_to_gdf(G: nx.MultiDiGraph, crs: int) -> gpd.GeoDataFrame:
     Converts nx graph to gpd.GeoDataFrame as edges.
     """
 
-    edges_list = []
+    e_ind_source, e_ind_target, e_data = zip(*G.edges(data=True))
+    index_matrix = np.array([e_ind_source, e_ind_target]).transpose()
+    final_index = [tuple(i) for i in index_matrix]
+    lines = (LineString(d['geometry']) for d in e_data)
+    gdf_edges = gpd.GeoDataFrame(e_data, index=final_index, crs=32636, geometry=list(lines))
 
-    for data in list(G.edges.data()):
-        current_dict = {
-            'id': (data[0], data[1])
-        }
-        current_dict.update(data[2])
-        edges_list.append(current_dict)
-
-    edges_gdf = gpd.GeoDataFrame(
-        data=edges_list, geometry='geometry', crs=crs
-    )
-
-    return edges_gdf
-
+    return gdf_edges
 
 def _nodes_to_gdf(G: nx.MultiDiGraph, crs: int) -> gpd.GeoDataFrame:
     """
     Converts nx graph to gpd.GeoDataFrame as nodes.
     """
 
-    nodes_list = []
-    for data in list(G.nodes.data()):
-        current_dict = {
-            'id': data[0]
-        }
-        geometry = Point([data[1]['x'], data[1]['y']])
-        current_dict['geometry'] = geometry
-        current_dict.update(data[1])
-        current_dict.pop('x')
-        current_dict.pop('y')
-        nodes_list.append(current_dict)
+    ind, data = zip(*G.nodes(data=True))
+    node_geoms = (Point(d["x"], d["y"]) for d in data)
+    gdf_nodes = gpd.GeoDataFrame(data, index=ind, crs=crs, geometry=list(node_geoms))
 
-    nodes_gdf = gpd.GeoDataFrame(
-        data=nodes_list, geometry='geometry', crs=crs
-    )
-
-    return nodes_gdf
+    return gdf_nodes
 
 
 def graph_to_gdf(
