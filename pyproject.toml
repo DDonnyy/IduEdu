@@ -20,6 +20,7 @@ geopandas = "^0.14.4"
 networkx = "^3.3"
 loguru = "^0.7.2"
 scipy = "^1.13.1"
+numba = "^0.60.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^24.2.0"

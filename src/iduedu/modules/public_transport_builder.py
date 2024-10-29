@@ -5,7 +5,7 @@ import networkx as nx
 import pandas as pd
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
-from tqdm.contrib.concurrent import process_map
+from tqdm.contrib.concurrent import process_map, thread_map
 
 from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
@@ -231,8 +231,11 @@ def get_all_public_transport_graph(
     if not config.enable_tqdm_bar:
         logger.debug("Downloading pt routes")
     overpass_data = pd.concat(
-        process_map(
-            _get_multi_routes_by_poly, args_list, desc="Downloading pt routes", disable=not config.enable_tqdm_bar
+        thread_map(
+            _get_multi_routes_by_poly,
+            args_list,
+            desc="Downloading pt routes with threads",
+            disable=not config.enable_tqdm_bar,
         ),
         ignore_index=True,
     ).reset_index(drop=True)
