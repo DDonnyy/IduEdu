@@ -1,6 +1,16 @@
 from enum import Enum
 from typing import Literal
 
+from iduedu.enums import DictionarizedEnum
+
+registration_status_enum = DictionarizedEnum(
+    {
+        "FEDERAL": 1,
+        "REGIONAL": 2,
+        "LOCAL": 3
+    }
+)
+
 
 class RegistrationStatus(Enum):
     """
