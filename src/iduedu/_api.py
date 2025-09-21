@@ -1,5 +1,5 @@
 # pylint: disable=unused-import
-from .modules.downloaders import get_boundary
+from .modules.overpass_downloaders import get_boundary
 from .modules.drive_walk_builder import get_drive_graph, get_walk_graph
 from .modules.graph_transformer import graph_to_gdf
 from .modules.intermodal_builder import get_intermodal_graph

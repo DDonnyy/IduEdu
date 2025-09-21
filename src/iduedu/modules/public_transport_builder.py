@@ -12,7 +12,7 @@ from iduedu.enums.pt_enums import PublicTrasport
 from iduedu.modules.routes_parser import parse_overpass_to_edgenode
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds
 
-from .downloaders import (
+from .overpass_downloaders import (
     get_boundary,
     get_routes_by_poly,
 )

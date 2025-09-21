@@ -6,7 +6,7 @@ from shapely import MultiPolygon, Polygon
 
 from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
-from iduedu.modules.downloaders import get_boundary
+from iduedu.modules.overpass_downloaders import get_boundary
 from iduedu.modules.drive_walk_builder import get_walk_graph
 from iduedu.modules.pt_walk_joiner import join_pt_walk_graph
 from iduedu.modules.public_transport_builder import get_all_public_transport_graph

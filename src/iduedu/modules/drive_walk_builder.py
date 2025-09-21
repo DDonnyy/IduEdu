@@ -1,37 +1,24 @@
-import re
-
+import numpy as np
+import pandas as pd
 import geopandas as gpd
 import networkx as nx
-import osmnx as ox
-import pandas as pd
-from shapely import MultiPolygon, Polygon, unary_union
-from tqdm.auto import tqdm
-
-from iduedu import config
+from shapely import line_merge, MultiLineString, LineString, Point
+from iduedu.enums.network_enums import Network
 from iduedu.enums.drive_enums import HighwayType
-from iduedu.modules.downloaders import get_boundary
+from iduedu.modules.overpass_downloaders import get_network_by_filters
 from iduedu.utils.utils import estimate_crs_for_bounds, keep_largest_strongly_connected_component
+from iduedu.modules.overpass_downloaders import get_boundary
+from iduedu import config
 
 logger = config.logger
 
-BASE_FILTER = "['highway'~'" + "|".join([h.value for h in HighwayType]) + "']"
-
 
 def get_highway_properties(highway) -> tuple[int, float]:
-    """
-    Determine the reg_status and speed based on highway type.
-    :return (reg_status, max_speed).
-    """
-    default_speed = 40 * 1000 / 60  # default: LOCAL, 40 км/ч
-
+    default_speed = 40 * 1000 / 60  # m/min
     if not highway:
         return 3, default_speed
-
     highway_list = highway if isinstance(highway, list) else [highway]
-
-    reg_values = []
-    speed_values = []
-
+    reg_values, speed_values = [], []
     for ht in highway_list:
         try:
             enum_value = HighwayType[ht.upper()]
@@ -39,211 +26,219 @@ def get_highway_properties(highway) -> tuple[int, float]:
             speed_values.append(enum_value.max_speed)
         except KeyError:
             continue
-
     if not reg_values or not speed_values:
         return 3, default_speed
-
     return min(reg_values), max(speed_values)
 
 
-def get_drive_graph_by_poly(
-    polygon: Polygon | MultiPolygon,
-    additional_edgedata=None,
-    road_filter: str = None,
-    retain_all: bool = False,
-    **osmnx_kwargs,
-) -> nx.MultiDiGraph:
-    if additional_edgedata is None:
-        additional_edgedata = []
-    if not road_filter:
-        road_filter = BASE_FILTER
-    if isinstance(polygon, MultiPolygon):
-        polygon = unary_union(polygon)
-        if isinstance(polygon, MultiPolygon):
-            polygon = polygon.convex_hull
-    logger.info("Downloading drive graph from OSM, it may take a while for large territory ...")
-    osmnx_kwargs["retain_all"] = retain_all
-    graph = ox.graph_from_polygon(polygon, network_type="drive", custom_filter=road_filter, **osmnx_kwargs)
+def _build_edges_from_overpass(polygon, way_filter: str, simplify: bool = True) -> gpd.GeoDataFrame:
+
+    data = get_network_by_filters(polygon, way_filter)
+    ways = data[data["type"] == "way"].copy()
+
+    # Собираем координаты каждой линии (lon, lat)
+    coords_list = [np.asarray([(p["lon"], p["lat"]) for p in pts], dtype="f8") for pts in ways["geometry"].values]
+
+    # сегментация на отрезки
+    starts = np.concatenate([a[:-1] for a in coords_list], axis=0)
+    ends = np.concatenate([a[1:] for a in coords_list], axis=0)
+
+    lengths = np.array([a.shape[0] for a in coords_list], dtype=int)
+    seg_counts = np.maximum(lengths - 1, 0)
+    way_idx = np.repeat(ways.index.values, seg_counts)
+
+    geoms = [LineString([tuple(s), tuple(e)]) for s, e in zip(starts, ends)]
+
+    # локальная проекция
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
-    nodes, edges = ox.graph_to_gdfs(graph)
-    edges: gpd.GeoDataFrame
-    edges.reset_index(inplace=True)
+    edges = gpd.GeoDataFrame({"way_idx": way_idx}, geometry=geoms, crs=4326).to_crs(local_crs)
+    edges = edges.join(ways[["id", "tags"]], on="way_idx")
 
-    edges[["reg", "maxspeed"]] = edges["highway"].apply(lambda h: pd.Series(get_highway_properties(h)))
+    if simplify:
+        # сшиваем ребра и переносим атрибуты через midpoints → nearest
+        merged = list(line_merge(MultiLineString(edges.geometry.to_list()), directed=True).geoms)
+        lines = gpd.GeoDataFrame(geometry=merged, crs=local_crs)
 
-    nodes.to_crs(local_crs, inplace=True)
-    nodes.geometry = nodes.geometry.set_precision(0.00001)
-    nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
-    edges.to_crs(local_crs, inplace=True)
-    edges.geometry = edges.geometry.set_precision(0.00001)
+        mid = lines.copy()
+        mid.geometry = mid.interpolate(lines.length / 2)
 
-    edges[["length_meter", "time_min"]] = edges.apply(
-        lambda row: (round(row.geometry.length, 3), round(row.geometry.length / row.maxspeed, 3)),
-        axis=1,
-        result_type="expand",
-    )
-    if additional_edgedata != "save_all":
-        for column in additional_edgedata:
-            if column not in edges.columns:
-                edges[column] = None
-        edgesdata = ["u", "v", "key", "length_meter", "time_min", "geometry"] + additional_edgedata
-        edges = edges[edgesdata]
+        # TODO Вот тут подумать надо, теряются аттрибуты, надо ли складывать их "по умному", в листы.
+        joined = gpd.sjoin_nearest(mid[["geometry"]], edges, how="left", max_distance=1)
+        joined = joined.reset_index().drop_duplicates(subset="index").set_index("index")
+        lines = lines.join(joined[["tags", "id", "way_idx"]])
 
-    edges.set_index(["u", "v", "key"], inplace=True)
-    graph = ox.graph_from_gdfs(nodes, edges)
-    if not retain_all:
-        graph = keep_largest_strongly_connected_component(graph)
-    mapping = {old_label: new_label for new_label, old_label in enumerate(graph.nodes())}
-    graph = nx.relabel_nodes(graph, mapping)
-    graph.graph["crs"] = local_crs
-    graph.graph["type"] = "drive"
-    logger.debug("Done!")
-    return graph
+        edges = lines
+
+    return edges, local_crs
 
 
 def get_drive_graph(
     osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    additional_edgedata=None,
+    polygon=None,
+    additional_edgedata: list[str] | str | None = None,
     retain_all: bool = False,
-    **osmnx_kwargs,
-):
-    """
-    Generate a road network graph for driving within the specified territory or polygon.
-    Optionally, include additional edge data such as highway type, max speed, registration status and road name.
+    simplify: bool = True,
+    road_filter: str | None = None,
+) -> nx.MultiDiGraph:
 
-    Parameters
-    ----------
-    osm_id : int, optional
-        OpenStreetMap ID of the territory to build the graph for. Either this or `territory_name` must be provided.
-    territory_name : str, optional
-        Name of the territory to build the graph for. Either this or `osm_id` must be provided.
-    polygon : Polygon | MultiPolygon, optional
-        A custom polygon or MultiPolygon to define the area for the road network. Must be in CRS 4326.
-    additional_edgedata : list[str], optional
-        List of additional edge data attributes to include in the graph. Possible values include
-        ['highway', 'maxspeed', 'reg', 'ref', 'name'] or any other, that exist in OSM. Defaults to None.
-    retain_all: bool, optional
-        If True, return the entire graph even if it is not connected.
-        If False, retain only the largest weakly connected component.
-    **osmnx_kwargs
-        Additional keyword arguments to pass to osmnx.graph.graph_from_polygon().
-        See https://osmnx.readthedocs.io/en/stable/user-reference.html#osmnx.graph.graph_from_polygon
-    Returns
-    -------
-    networkx.Graph
-        A road network graph for the specified territory or polygon, with optional additional edge data.
 
-    Examples
-    --------
-    >>> drive_graph = get_drive_graph(osm_id=1114252)
-    >>> drive_graph = get_drive_graph(territory_name="Санкт-Петербург", additional_edgedata=['highway', 'maxspeed'])
-    >>> drive_graph = get_drive_graph(polygon=some_polygon, additional_edgedata=['name', 'ref'],simplify=False)
+    if additional_edgedata is None:
+        additional_edgedata = []
 
-    Notes
-    -----
-    Road speeds are defined in `iduedu.enums.drive_enums.py`.
-    The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
-    """
+    polygon = get_boundary(osm_id, polygon)
+    if road_filter is 'drive_service':
+        road_filter = Network.DRIVE_SERVICE.filter
 
-    polygon = get_boundary(osm_id, territory_name, polygon)
+    if road_filter is None:
+        road_filter = Network.DRIVE.filter
 
-    return get_drive_graph_by_poly(
-        polygon, additional_edgedata=additional_edgedata, retain_all=retain_all, **osmnx_kwargs
+    logger.info("Downloading drive network via Overpass ...")
+    edges, local_crs = _build_edges_from_overpass(polygon, road_filter, simplify=simplify)
+
+    TAG_WHITELIST = {"oneway", "highway", "name", "maxspeed", "lanes"}
+    tags_df = pd.DataFrame.from_records(
+        ({k: v for k, v in d.items() if k in TAG_WHITELIST} for d in edges["tags"]),
+        index=edges.index,
     )
+    edges = edges.join(tags_df)
+
+    # двусторонние — дублируем с реверсом
+    two_way = edges[edges["oneway"] != "yes"].copy()
+    two_way.geometry = two_way.geometry.reverse()
+    edges = pd.concat([edges, two_way], ignore_index=True)
+
+    # u/v и узлы
+    coords = edges.geometry.get_coordinates().to_numpy()
+    counts = edges.geometry.count_coordinates()
+    cuts = np.cumsum(counts)
+    first_idx = np.r_[0, cuts[:-1]]
+    last_idx = cuts - 1
+    starts = coords[first_idx]
+    ends = coords[last_idx]
+    edges["start"] = list(map(tuple, starts))
+    edges["end"] = list(map(tuple, ends))
+
+    all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
+    labels, uniques = pd.factorize(all_endpoints)
+    n = len(edges)
+    u = labels[:n]
+    v = labels[n:]
+    edges["u"] = u
+    edges["v"] = v
+
+    # длины и время (drive): скорость из HighwayType
+    # (maxspeed в теге может быть строкой; используем enum через 'highway')
+    # сначала определим reg и скорость (m/min)
+    reg_speed = edges["highway"].map(lambda h: pd.Series(get_highway_properties(h)), na_action=None)
+    edges[["reg", "maxspeed_mpm"]] = reg_speed.values
+    edges["length_meter"] = edges.geometry.length.round(3)
+    # защищаемся от деления на 0
+    edges["time_min"] = (edges["length_meter"] / edges["maxspeed_mpm"].replace({0: np.nan})).round(3)
+
+    # дополнительные поля
+    if additional_edgedata != "save_all":
+        for col in additional_edgedata:
+            if col not in edges.columns:
+                edges[col] = None
+
+    # строим MultiDiGraph
+    G = nx.MultiDiGraph()
+
+    # TODO fix без for
+    # Узлы с координатами
+    for i, (x, y) in enumerate(uniques):
+        G.add_node(i, x=float(x), y=float(y), geometry=Point(x, y))
+
+    # TODO fix проработать additional data
+    # Список атрибутов для ребра
+    edge_attr_cols = [
+        "length_meter",
+        "time_min",
+        "geometry",
+        "oneway",
+        "highway",
+        "name",
+        "maxspeed",
+        "lanes",
+        "reg",
+        "maxspeed_mpm",
+        "id",
+        "way_idx",
+    ]
+    if additional_edgedata == "save_all":
+        # всё уже в edges; выберем всё кроме служебных u/v/start/end
+        edge_attr_cols = [c for c in edges.columns if c not in {"u", "v", "start", "end"}]
+    else:
+        edge_attr_cols += [c for c in additional_edgedata if c not in edge_attr_cols]
+
+    attrs_iter = edges[edge_attr_cols].to_dict("records")\
+    # TODO fix
+    G.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
+
+    if not retain_all:
+        G = keep_largest_strongly_connected_component(G)
+
+    # перенумерация узлов (как в осмнксовском билдере)
+    mapping = {old: new for new, old in enumerate(G.nodes())}
+    G = nx.relabel_nodes(G, mapping)
+    G.graph["crs"] = local_crs
+    G.graph["type"] = "drive"
+    logger.debug("Drive graph built.")
+    return G
 
 
 def get_walk_graph(
     osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    walk_speed: float = 5 * 1000 / 60,
+    polygon=None,
+    walk_speed: float = 5 * 1000 / 60,  # m/min
     retain_all: bool = False,
-    **osmnx_kwargs,
-):
-    """
-    Generate a pedestrian road network graph within the specified territory or polygon.
-    The graph's edges includes calculated walking times based on the specified walking speed.
+    simplify: bool = True,
+    road_filter: str | None = None,
+) -> nx.MultiDiGraph:
 
-    Parameters
-    ----------
-    osm_id : int, optional
-        OpenStreetMap ID of the territory to build the walking graph for.
-        Either this or `territory_name` must be provided.
-    territory_name : str, optional
-        Name of the territory to build the walking graph for. Either this or `osm_id` must be provided.
-    polygon : Polygon | MultiPolygon, optional
-        A custom polygon or MultiPolygon to define the area for the pedestrian network. Must be in CRS 4326.
-    walk_speed : float, optional
-        Walking speed in meters per minute. Defaults to 5 km/h (approximately 83.33 meters per minute).
-    retain_all: bool, optional
-        If True, return the entire graph even if it is not connected.
-        If False, retain only the largest weakly connected component.
-    **osmnx_kwargs
-        Additional keyword arguments to pass to osmnx.graph.graph_from_polygon().
-        See https://osmnx.readthedocs.io/en/stable/user-reference.html#osmnx.graph.graph_from_polygon
+    polygon = get_boundary(osm_id, polygon)
+    if road_filter is None:
+        road_filter = Network.WALK.filter
 
-    Returns
-    -------
-    networkx.Graph
-        A pedestrian road network graph with edge lengths and walking times for the specified territory or polygon.
+    logger.info("Downloading walk network via Overpass ...")
+    edges, local_crs = _build_edges_from_overpass(polygon, road_filter, simplify=simplify)
 
-    Examples
-    --------
-    >>> walk_graph = get_walk_graph(osm_id=1114252)
-    >>> walk_graph = get_walk_graph(territory_name="Санкт-Петербург", walk_speed=5)
-    >>> walk_graph = get_walk_graph(polygon=some_polygon,simplify=False)
+    # длина/время
+    edges["length_meter"] = edges.geometry.length.round(3)
+    edges["time_min"] = (edges["length_meter"] / walk_speed).round(3)
 
-    Notes
-    -----
-    The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
-    """
+    # u/v и узлы
+    coords = edges.geometry.get_coordinates().to_numpy()
+    counts = edges.geometry.count_coordinates()
+    cuts = np.cumsum(counts)
+    first_idx = np.r_[0, cuts[:-1]]
+    last_idx = cuts - 1
+    starts = coords[first_idx]
+    ends = coords[last_idx]
+    edges["start"] = list(map(tuple, starts))
+    edges["end"] = list(map(tuple, ends))
 
-    polygon = get_boundary(osm_id, territory_name, polygon)
+    all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
+    labels, uniques = pd.factorize(all_endpoints)
+    n = len(edges)
+    u = labels[:n]
+    v = labels[n:]
 
-    logger.info("Downloading walk graph from OSM, it may take a while for large territory ...")
-    osmnx_kwargs["retain_all"] = retain_all
-    if "simplify" not in osmnx_kwargs:
-        osmnx_kwargs["simplify"] = True
-    graph = ox.graph_from_polygon(polygon, network_type="walk", **osmnx_kwargs)
-    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
+    G = nx.MultiDiGraph()
+    for i, (x, y) in enumerate(uniques):
+        G.add_node(i, x=float(x), y=float(y), geometry=Point(x, y))
 
-    nodes, edges = ox.graph_to_gdfs(graph)
-    nodes.to_crs(local_crs, inplace=True)
-    nodes.geometry = nodes.geometry.set_precision(0.00001)
-    nodes[["x", "y"]] = nodes.apply(lambda row: (row.geometry.x, row.geometry.y), axis=1, result_type="expand")
-    nodes = nodes[["x", "y", "geometry"]]
-    edges.reset_index(inplace=True)
-    edges.to_crs(local_crs, inplace=True)
-    edges.geometry = edges.geometry.set_precision(0.00001)
-    tqdm.pandas(desc="Calculating the weights of the walk graph", disable=not config.enable_tqdm_bar)
-    edges[["length_meter", "time_min"]] = edges.progress_apply(
-        lambda row: (round(row.geometry.length, 3), round(row.geometry.length / walk_speed, 3)),
-        axis=1,
-        result_type="expand",
-    )
-    edges["type"] = "walk"
-    edges = edges[
-        [
-            "u",
-            "v",
-            "key",
-            "length_meter",
-            "time_min",
-            "type",
-            "geometry",
-        ]
-    ]
-    edges.set_index(["u", "v", "key"], inplace=True)
-    graph = ox.graph_from_gdfs(nodes, edges)
+    attrs_iter = edges[["length_meter", "time_min", "geometry"]].to_dict("records")
+    G.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
+
     if not retain_all:
-        graph = keep_largest_strongly_connected_component(graph)
-    mapping = {old_label: new_label for new_label, old_label in enumerate(graph.nodes())}
-    graph = nx.relabel_nodes(graph, mapping)
-    graph.graph["crs"] = local_crs
-    graph.graph["walk_speed"] = walk_speed
-    graph.graph["type"] = "walk"
-    logger.debug("Done!")
-    return graph
+        G = keep_largest_strongly_connected_component(G)
+
+    mapping = {old: new for new, old in enumerate(G.nodes())}
+    G = nx.relabel_nodes(G, mapping)
+    G.graph["crs"] = local_crs
+    G.graph["walk_speed"] = walk_speed
+    G.graph["type"] = "walk"
+    logger.debug("Walk graph built.")
+    return G

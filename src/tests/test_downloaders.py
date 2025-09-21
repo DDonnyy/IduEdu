@@ -8,7 +8,7 @@ from iduedu import (
     config,
     get_boundary,
 )
-from iduedu.modules.downloaders import RequestError, get_routes_by_poly
+from iduedu.modules.overpass_downloaders import RequestError, get_routes_by_poly
 
 config.change_logger_lvl("DEBUG")
 
