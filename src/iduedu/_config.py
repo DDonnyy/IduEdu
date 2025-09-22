@@ -8,17 +8,6 @@ class Config:
     """
     A configuration class to manage global settings for the application, such as Overpass API URL, timeouts, and logging options.
 
-    Attributes
-    ----------
-    overpass_url : str
-        URL for accessing the Overpass API. Defaults to "http://lz4.overpass-api.de/api/interpreter".
-    timeout : int or None
-        Timeout in seconds for API requests. If None, no timeout is applied.
-    enable_tqdm_bar : bool
-        Enables or disables progress bars (via tqdm). Defaults to True.
-    logger : Logger
-        Logging instance to handle application logging.
-
     Methods
     -------
     change_logger_lvl(lvl: Literal["TRACE", "DEBUG", "INFO", "WARN", "ERROR"])
@@ -31,22 +20,20 @@ class Config:
         Enables or disables progress bars in the application.
     """
 
-    def __init__(
-        self,
-        overpass_url="http://lz4.overpass-api.de/api/interpreter",
-        timeout=None,
-        enable_tqdm_bar=True,
-    ):
-        self.overpass_url = overpass_url
-        self.timeout = timeout
-        self.enable_tqdm_bar = enable_tqdm_bar
+    def __init__(self):
+        self.overpass_url = "http://lz4.overpass-api.de/api/interpreter"
+        self.timeout = None
+        self.enable_tqdm_bar = True
         self.logger = logger
+        self.drive_useful_edges_attr = {"highway", "name", "lanes"}
+        self.walk_useful_edges_attr = {"highway", "name"}
 
-    def change_logger_lvl(self, lvl: Literal["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]):
+    def set_logger_lvl(self, lvl: Literal["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]):
         self.logger.remove()
         self.logger.add(sys.stderr, level=lvl)
 
     def set_overpass_url(self, url: str):
+        # TODO ping new url
         self.overpass_url = url
 
     def set_timeout(self, timeout: int):
@@ -55,6 +42,12 @@ class Config:
     def set_enable_tqdm(self, enable: bool):
         self.enable_tqdm_bar = enable
 
+    def set_drive_useful_edges_attr(self, attr: set):
+        self.drive_useful_edges_attr = set(attr)
+
+    def set_walk_useful_edges_attr(self, attr: set):
+        self.walk_useful_edges_attr = set(attr)
+
 
 config = Config()
-config.change_logger_lvl("INFO")
+config.set_logger_lvl("INFO")

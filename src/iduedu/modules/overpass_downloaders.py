@@ -4,6 +4,7 @@ import time
 from typing import Literal
 
 import pandas as pd
+import geopandas as gpd
 import requests
 from shapely import LineString, MultiPolygon, Polygon, unary_union
 from shapely.ops import polygonize
@@ -154,15 +155,23 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
     return unary_union(geoms)
 
 
-def get_boundary(osm_id: int | None = None, polygon: Polygon | MultiPolygon | None = None) -> Polygon:
-    if osm_id is None and polygon is None:
-        raise ValueError("Either osm_id or polygon must be specified")
-    if osm_id:
-        polygon = get_boundary_by_osm_id(osm_id)
-    if isinstance(polygon, MultiPolygon):
-        polygon = polygon.convex_hull
+def get_4326_boundary(
+    osm_id: int | None = None, territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None
+) -> Polygon:
 
-    return polygon
+    if osm_id:
+        territory = get_boundary_by_osm_id(osm_id)
+
+    if isinstance(territory, Polygon):
+        return territory
+
+    if isinstance(territory, MultiPolygon):
+        return Polygon(territory.convex_hull)
+
+    if isinstance(territory, gpd.GeoDataFrame):
+        return get_4326_boundary(territory=territory.to_crs(4326).union_all())
+
+    raise ValueError("Either osm_id or polygon must be specified")
 
 
 def _poly_to_overpass(poly: Polygon) -> str:

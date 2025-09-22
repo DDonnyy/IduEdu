@@ -13,7 +13,7 @@ from iduedu.modules.routes_parser import parse_overpass_to_edgenode
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds
 
 from .overpass_downloaders import (
-    get_boundary,
+    get_4326_boundary,
     get_routes_by_poly,
 )
 
@@ -143,7 +143,7 @@ def get_single_public_transport_graph(
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
 
-    polygon = get_boundary(osm_id, territory_name, polygon)
+    polygon = get_4326_boundary(osm_id, territory_name, polygon)
 
     overpass_data = get_routes_by_poly(polygon, public_transport_type)
     if overpass_data.shape[0] == 0:
@@ -241,7 +241,7 @@ def get_all_public_transport_graph(
             if not isinstance(transport_type, PublicTrasport):
                 raise ValueError(f"transport_type {transport_type} is not a valid transport type.")
 
-    polygon = get_boundary(osm_id, territory_name, polygon)
+    polygon = get_4326_boundary(osm_id, territory_name, polygon)
 
     transports = [transport.value for transport in transport_types]
     args_list = [(polygon, transport) for transport in transports]

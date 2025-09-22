@@ -27,8 +27,9 @@ pip install IduEdu
 
 ```python
 from iduedu import config
+
 config.set_timeout(10)  # Timeout for overpass queries
-config.change_logger_lvl('INFO')  # To mute all debug msgs
+config.set_logger_lvl('INFO')  # To mute all debug msgs
 config.set_enable_tqdm(False)  # To mute all tqdm's progress bars
 config.set_overpass_url('http://your.overpass-api.de/interpreter/URL')
 ```

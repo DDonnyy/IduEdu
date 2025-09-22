@@ -13,10 +13,10 @@ def config_instance():
 
 def test_change_logger_lvl(config_instance):
 
-    config_instance.change_logger_lvl("DEBUG")
+    config_instance.set_logger_lvl("DEBUG")
     assert logger.level("DEBUG").no == logger.level("DEBUG").no
 
-    config_instance.change_logger_lvl("ERROR")
+    config_instance.set_logger_lvl("ERROR")
     assert logger.level("ERROR").no == logger.level("ERROR").no
 
 

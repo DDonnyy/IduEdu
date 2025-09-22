@@ -44,7 +44,7 @@ def keep_largest_strongly_connected_component(graph: nx.DiGraph) -> nx.DiGraph:
     return graph
 
 
-def estimate_crs_for_bounds(minx, miny, maxx, maxy):
+def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:
     x_center = np.mean([minx, maxx])
     y_center = np.mean([miny, maxy])
     utm_crs_list = query_utm_crs_info(

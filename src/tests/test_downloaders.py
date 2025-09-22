@@ -6,11 +6,11 @@ import pytest
 
 from iduedu import (
     config,
-    get_boundary,
+    get_4326_boundary,
 )
 from iduedu.modules.overpass_downloaders import RequestError, get_routes_by_poly
 
-config.change_logger_lvl("DEBUG")
+config.set_logger_lvl("DEBUG")
 
 
 def test_get_boundary_by_osm_id(bounds):
@@ -19,7 +19,7 @@ def test_get_boundary_by_osm_id(bounds):
 
 def test_get_boundary_by_name():
     time.sleep(0.5)
-    bounds = get_boundary(territory_name="Василеостровский район")
+    bounds = get_4326_boundary(territory_name="Василеостровский район")
     assert bounds is not None
 
 

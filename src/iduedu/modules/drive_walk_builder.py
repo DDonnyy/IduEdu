@@ -1,37 +1,52 @@
+from typing import Literal
+
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import networkx as nx
-from shapely import line_merge, MultiLineString, LineString, Point
+from geopandas import GeoDataFrame
+from pyproj import CRS
+from shapely import line_merge, MultiLineString, LineString, Point, Polygon
+from shapely.geometry.multipolygon import MultiPolygon
+
 from iduedu.enums.network_enums import Network
-from iduedu.enums.drive_enums import HighwayType
+from iduedu.enums.highway_enums import HighwayType
 from iduedu.modules.overpass_downloaders import get_network_by_filters
 from iduedu.utils.utils import estimate_crs_for_bounds, keep_largest_strongly_connected_component
-from iduedu.modules.overpass_downloaders import get_boundary
+from iduedu.modules.overpass_downloaders import get_4326_boundary
 from iduedu import config
 
 logger = config.logger
 
 
-def get_highway_properties(highway) -> tuple[int, float]:
-    default_speed = 40 * 1000 / 60  # m/min
+def get_highway_properties(highway) -> tuple[str, float]:
+    default = (HighwayType.UNCLASSIFIED.reg_status, HighwayType.UNCLASSIFIED.max_speed)
+
     if not highway:
-        return 3, default_speed
+        return default
+
     highway_list = highway if isinstance(highway, list) else [highway]
     reg_values, speed_values = [], []
     for ht in highway_list:
         try:
             enum_value = HighwayType[ht.upper()]
-            reg_values.append(enum_value.reg_status)
-            speed_values.append(enum_value.max_speed)
         except KeyError:
             continue
+        reg_values.append(enum_value.reg_status)
+        speed_values.append(enum_value.max_speed)
+
     if not reg_values or not speed_values:
-        return 3, default_speed
-    return min(reg_values), max(speed_values)
+        return default
+
+    rank = {"local": 0, "regional": 1, "federal": 2}
+    lowest_reg = min(reg_values, key=lambda s: rank.get(s, 999))
+
+    min_speed = min(speed_values) if speed_values else default[1]
+
+    return lowest_reg, min_speed
 
 
-def _build_edges_from_overpass(polygon, way_filter: str, simplify: bool = True) -> gpd.GeoDataFrame:
+def _build_edges_from_overpass(polygon: Polygon, way_filter: str, simplify: bool = True) -> tuple[GeoDataFrame, CRS]:
 
     data = get_network_by_filters(polygon, way_filter)
     ways = data[data["type"] == "way"].copy()
@@ -50,7 +65,7 @@ def _build_edges_from_overpass(polygon, way_filter: str, simplify: bool = True) 
     geoms = [LineString([tuple(s), tuple(e)]) for s, e in zip(starts, ends)]
 
     # локальная проекция
-    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
+    local_crs = estimate_crs_for_bounds(*polygon.bounds)
 
     edges = gpd.GeoDataFrame({"way_idx": way_idx}, geometry=geoms, crs=4326).to_crs(local_crs)
     edges = edges.join(ways[["id", "tags"]], on="way_idx")
@@ -74,31 +89,43 @@ def _build_edges_from_overpass(polygon, way_filter: str, simplify: bool = True) 
 
 
 def get_drive_graph(
+    *,
     osm_id: int | None = None,
-    polygon=None,
-    additional_edgedata: list[str] | str | None = None,
-    retain_all: bool = False,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
+    osm_edge_tags: list[str] | None = None,  # overrides default tags
+    keep_largest_subgraph: bool = True,
     simplify: bool = True,
-    road_filter: str | None = None,
+    road_type: Literal["drive", "drive_service", "custom"] = "drive",
+    custom_filter: str | None = None,
+    add_road_category: bool = True,
 ) -> nx.MultiDiGraph:
 
+    polygon4326 = get_4326_boundary(osm_id, territory)
 
-    if additional_edgedata is None:
-        additional_edgedata = []
-
-    polygon = get_boundary(osm_id, polygon)
-    if road_filter is 'drive_service':
-        road_filter = Network.DRIVE_SERVICE.filter
-
-    if road_filter is None:
-        road_filter = Network.DRIVE.filter
+    filters = {
+        "drive": Network.DRIVE.filter,
+        "drive_service": Network.DRIVE_SERVICE.filter,
+        "custom": custom_filter,
+    }
+    try:
+        road_filter = filters[road_type]
+    except KeyError:
+        raise ValueError(f"Unknown road_type: {road_type!r}")
+    if road_type == "custom" and road_filter is None:
+        raise ValueError("For road_type='custom' you must provide custom_filter")
 
     logger.info("Downloading drive network via Overpass ...")
-    edges, local_crs = _build_edges_from_overpass(polygon, road_filter, simplify=simplify)
+    edges, local_crs = _build_edges_from_overpass(polygon4326, road_filter, simplify=simplify)
 
-    TAG_WHITELIST = {"oneway", "highway", "name", "maxspeed", "lanes"}
+    if osm_edge_tags is None:
+        needed_tags = set(config.drive_useful_edges_attr)
+    else:
+        needed_tags = set(osm_edge_tags)
+
+    needed_tags = set(needed_tags) | {"oneway", "maxspeed"}
+
     tags_df = pd.DataFrame.from_records(
-        ({k: v for k, v in d.items() if k in TAG_WHITELIST} for d in edges["tags"]),
+        ({k: v for k, v in d.items() if k in needed_tags} for d in edges["tags"]),
         index=edges.index,
     )
     edges = edges.join(tags_df)
@@ -108,7 +135,6 @@ def get_drive_graph(
     two_way.geometry = two_way.geometry.reverse()
     edges = pd.concat([edges, two_way], ignore_index=True)
 
-    # u/v и узлы
     coords = edges.geometry.get_coordinates().to_numpy()
     counts = edges.geometry.count_coordinates()
     cuts = np.cumsum(counts)
@@ -127,28 +153,14 @@ def get_drive_graph(
     edges["u"] = u
     edges["v"] = v
 
-    # длины и время (drive): скорость из HighwayType
-    # (maxspeed в теге может быть строкой; используем enum через 'highway')
-    # сначала определим reg и скорость (m/min)
-    reg_speed = edges["highway"].map(lambda h: pd.Series(get_highway_properties(h)), na_action=None)
-    edges[["reg", "maxspeed_mpm"]] = reg_speed.values
+    edges[["category", "maxspeed_mpm"]] = edges["highway"].map(lambda h: pd.Series(get_highway_properties(h)))
+
     edges["length_meter"] = edges.geometry.length.round(3)
-    # защищаемся от деления на 0
-    edges["time_min"] = (edges["length_meter"] / edges["maxspeed_mpm"].replace({0: np.nan})).round(3)
+    edges["time_min"] = (edges["length_meter"] / edges["maxspeed_mpm"]).round(3)
 
-    # дополнительные поля
-    if additional_edgedata != "save_all":
-        for col in additional_edgedata:
-            if col not in edges.columns:
-                edges[col] = None
+    graph = nx.MultiDiGraph()
 
-    # строим MultiDiGraph
-    G = nx.MultiDiGraph()
-
-    # TODO fix без for
-    # Узлы с координатами
-    for i, (x, y) in enumerate(uniques):
-        G.add_node(i, x=float(x), y=float(y), geometry=Point(x, y))
+    graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 
     # TODO fix проработать additional data
     # Список атрибутов для ребра
@@ -156,15 +168,6 @@ def get_drive_graph(
         "length_meter",
         "time_min",
         "geometry",
-        "oneway",
-        "highway",
-        "name",
-        "maxspeed",
-        "lanes",
-        "reg",
-        "maxspeed_mpm",
-        "id",
-        "way_idx",
     ]
     if additional_edgedata == "save_all":
         # всё уже в edges; выберем всё кроме служебных u/v/start/end
@@ -172,20 +175,19 @@ def get_drive_graph(
     else:
         edge_attr_cols += [c for c in additional_edgedata if c not in edge_attr_cols]
 
-    attrs_iter = edges[edge_attr_cols].to_dict("records")\
-    # TODO fix
-    G.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
+    attrs_iter = edges[edge_attr_cols].to_dict("records")  # TODO fix
+    graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
-    if not retain_all:
-        G = keep_largest_strongly_connected_component(G)
+    if not keep_largest_subgraph:
+        graph = keep_largest_strongly_connected_component(graph)
 
     # перенумерация узлов (как в осмнксовском билдере)
-    mapping = {old: new for new, old in enumerate(G.nodes())}
-    G = nx.relabel_nodes(G, mapping)
-    G.graph["crs"] = local_crs
-    G.graph["type"] = "drive"
+    mapping = {old: new for new, old in enumerate(graph.nodes())}
+    graph = nx.relabel_nodes(graph, mapping)
+    graph.graph["crs"] = local_crs
+    graph.graph["type"] = "drive"
     logger.debug("Drive graph built.")
-    return G
+    return graph
 
 
 def get_walk_graph(
@@ -197,7 +199,7 @@ def get_walk_graph(
     road_filter: str | None = None,
 ) -> nx.MultiDiGraph:
 
-    polygon = get_boundary(osm_id, polygon)
+    polygon = get_4326_boundary(osm_id, polygon)
     if road_filter is None:
         road_filter = Network.WALK.filter
 

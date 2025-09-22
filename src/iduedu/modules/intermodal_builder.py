@@ -6,7 +6,7 @@ from shapely import MultiPolygon, Polygon
 
 from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
-from iduedu.modules.overpass_downloaders import get_boundary
+from iduedu.modules.overpass_downloaders import get_4326_boundary
 from iduedu.modules.drive_walk_builder import get_walk_graph
 from iduedu.modules.pt_walk_joiner import join_pt_walk_graph
 from iduedu.modules.public_transport_builder import get_all_public_transport_graph
@@ -79,7 +79,7 @@ def get_intermodal_graph(
     If the public transport graph is empty, only the pedestrian graph is returned.
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
-    boundary = get_boundary(osm_id, territory_name, polygon)
+    boundary = get_4326_boundary(osm_id, territory_name, polygon)
     with concurrent.futures.ThreadPoolExecutor() as executor:
         walk_graph_future = executor.submit(get_walk_graph, polygon=boundary, retain_all=retain_all, **osmnx_kwargs)
         logger.debug("Started downloading and parsing walk graph...")

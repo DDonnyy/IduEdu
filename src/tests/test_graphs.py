@@ -12,7 +12,7 @@ from iduedu import (
     join_pt_walk_graph,
 )
 
-config.change_logger_lvl("DEBUG")
+config.set_logger_lvl("DEBUG")
 
 
 @pytest.fixture(scope="module")
