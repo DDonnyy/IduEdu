@@ -181,7 +181,7 @@ def _poly_to_overpass(poly: Polygon) -> str:
 def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataFrame:
     polygon_coords = _poly_to_overpass(polygon)
     overpass_query = f"""
-        [out:json];
+        [out:json][timeout:{config.timeout}];
                 (
                     relation(poly:\"{polygon_coords}\")[ 'route' = '{public_transport_type}' ];
                 );
@@ -202,8 +202,8 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
     polygon_coords = _poly_to_overpass(polygon)
     overpass_query = f"""
-        [out:json];
-            (way{way_filter}(poly:\"{polygon_coords}\");>;);
+        [out:json][timeout:{config.timeout}];
+            (way{way_filter}(poly:\"{polygon_coords}\"););
         out geom;
         """
     logger.debug(f"Downloading network from OSM with filters <{way_filter}> ...")

@@ -22,7 +22,7 @@ class Config:
 
     def __init__(self):
         self.overpass_url = "http://lz4.overpass-api.de/api/interpreter"
-        self.timeout = None
+        self.timeout = 600
         self.enable_tqdm_bar = True
         self.logger = logger
         self.drive_useful_edges_attr = {"highway", "name", "lanes"}

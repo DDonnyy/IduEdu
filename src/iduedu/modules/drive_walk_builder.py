@@ -98,6 +98,8 @@ def get_drive_graph(
     road_type: Literal["drive", "drive_service", "custom"] = "drive",
     custom_filter: str | None = None,
     add_road_category: bool = True,
+    keep_edge_geometry: bool = True,
+    clip_by_territory: bool = False, # TODO клипать или нет, вроде просто .clip гдфку
 ) -> nx.MultiDiGraph:
 
     polygon4326 = get_4326_boundary(osm_id, territory)
@@ -122,10 +124,10 @@ def get_drive_graph(
     else:
         needed_tags = set(osm_edge_tags)
 
-    needed_tags = set(needed_tags) | {"oneway", "maxspeed"}
+    tags_to_retrieve = set(needed_tags) | {"oneway", "maxspeed", "highway"}
 
     tags_df = pd.DataFrame.from_records(
-        ({k: v for k, v in d.items() if k in needed_tags} for d in edges["tags"]),
+        ({k: v for k, v in d.items() if k in tags_to_retrieve} for d in edges["tags"]),
         index=edges.index,
     )
     edges = edges.join(tags_df)
@@ -153,39 +155,35 @@ def get_drive_graph(
     edges["u"] = u
     edges["v"] = v
 
-    edges[["category", "maxspeed_mpm"]] = edges["highway"].map(lambda h: pd.Series(get_highway_properties(h)))
+    edges[["category", "maxspeed_mpm"]] = edges["highway"].apply(lambda h: pd.Series(get_highway_properties(h)))
+
+    maxspeed_osm_mpm = (pd.to_numeric(edges["maxspeed"], errors="coerce") * 1000.0 / 60.0).round(3)
+
+    edges["speed_mpm"] = maxspeed_osm_mpm.fillna(edges["maxspeed_mpm"])
 
     edges["length_meter"] = edges.geometry.length.round(3)
-    edges["time_min"] = (edges["length_meter"] / edges["maxspeed_mpm"]).round(3)
+    edges["time_min"] = (edges["length_meter"] / edges["speed_mpm"]).round(3)
 
     graph = nx.MultiDiGraph()
 
     graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 
-    # TODO fix проработать additional data
-    # Список атрибутов для ребра
-    edge_attr_cols = [
-        "length_meter",
-        "time_min",
-        "geometry",
-    ]
-    if additional_edgedata == "save_all":
-        # всё уже в edges; выберем всё кроме служебных u/v/start/end
-        edge_attr_cols = [c for c in edges.columns if c not in {"u", "v", "start", "end"}]
-    else:
-        edge_attr_cols += [c for c in additional_edgedata if c not in edge_attr_cols]
-
-    attrs_iter = edges[edge_attr_cols].to_dict("records")  # TODO fix
+    if add_road_category:
+        needed_tags |= {"category"}
+    if keep_edge_geometry:
+        needed_tags |= {"geometry"}
+    needed_tags |= {"length_meter", "time_min"}
+    edge_attr_cols = list(needed_tags)
+    attrs_iter = edges[edge_attr_cols].to_dict("records")
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
     if not keep_largest_subgraph:
         graph = keep_largest_strongly_connected_component(graph)
 
-    # перенумерация узлов (как в осмнксовском билдере)
     mapping = {old: new for new, old in enumerate(graph.nodes())}
     graph = nx.relabel_nodes(graph, mapping)
     graph.graph["crs"] = local_crs
-    graph.graph["type"] = "drive"
+    graph.graph["type"] = road_type
     logger.debug("Drive graph built.")
     return graph
 
