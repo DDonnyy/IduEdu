@@ -88,7 +88,7 @@ def _link_unconnected(disconnected_ways) -> list:
     return connected_ways
 
 
-def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
+def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -> pd.Series:
     transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
 
     def transform_geometry(loc):
@@ -103,34 +103,67 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
             return None
         return filtered.apply(transform_geometry, axis=1).tolist()
 
-    if "ref" in loc["tags"].keys():
-        transport_name = loc["tags"]["ref"]
-    elif "name" in loc["tags"].keys():
-        transport_name = loc["tags"]["name"]
-    else:
-        transport_name = None
-    route = pd.DataFrame(loc["members"])
+    def extract_needed(loc_obj: dict, keys: list[str]) -> dict | None:
+        out = {}
+        tags = loc_obj.get("tags", {}) if isinstance(loc_obj.get("tags"), dict) else {}
+        for k in keys:
+            value_found = None
+            if "." in k:
+                # dotted path
+                parts = k.split(".")
+                cur = loc_obj
+                ok = True
+                for part in parts:
+                    if isinstance(cur, dict) and part in cur:
+                        cur = cur[part]
+                    else:
+                        ok = False
+                        break
+                if ok:
+                    value_found = cur
+            else:
+                if k in tags:
+                    value_found = tags[k]
+                elif k in loc_obj:
+                    value_found = loc_obj[k]
+            if value_found is not None:
+                out[k] = value_found
+        return out or None
 
-    if "geometry" not in route.columns:
-        route["geometry"] = np.nan
-    if "lat" not in route.columns:
-        route["lat"] = np.nan
-    if "lon" not in route.columns:
-        route["lon"] = np.nan
+    tags = loc.get("tags", {}) if isinstance(loc.get("tags"), dict) else {}
+
+    transport_name = None
+    if "ref" in tags:
+        transport_name = tags["ref"]
+    elif "name" in tags:
+        transport_name = tags["name"]
+
+    members = loc.get("members", [])
+    route = pd.DataFrame(members) if isinstance(members, list) else pd.DataFrame()
+
+    for col in ("geometry", "lat", "lon", "role", "type"):
+        if col not in route.columns:
+            route[col] = np.nan
 
     route = route.dropna(subset=["lat", "lon", "geometry"], how="all")
 
     platforms = process_roles(route, PLATFORM_ROLES)
     stops = process_roles(route, STOPS_ROLES)
 
-    ways = route[(route["type"] == "way") & (route["role"] == "")]
+    ways_df = route[(route["type"] == "way") & (route["role"].fillna("") == "")]
 
-    if len(ways) > 0:
-        ways = ways["geometry"].reset_index(drop=True)
-        ways = ways.apply(lambda x: ([transformer.transform(coords["lon"], coords["lat"]) for coords in x])).tolist()
+    if not ways_df.empty:
+        ways = (
+            ways_df["geometry"]
+            .reset_index(drop=True)
+            .apply(lambda g: [transformer.transform(pt["lon"], pt["lat"]) for pt in g])
+            .tolist()
+        )
         connected_ways = [[]]
         cur_way = 0
         for coords in ways:
+            if not coords:
+                continue
             # Соединяем маршруты, если всё ок, идут без пропусков
             if not connected_ways[cur_way]:
                 connected_ways[cur_way] += coords
@@ -155,7 +188,7 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
                 connected_ways += [coords]
                 cur_way += 1
         # Соединяем линии по ближайшим точкам этих линий
-        temp = connected_ways.copy()
+
         if len(connected_ways) > 1:
             # удаляем все круговые движения
             to_del = [i for i, data in enumerate(connected_ways) if data[0] == data[-1]]
@@ -167,16 +200,20 @@ def parse_overpass_route_response(loc: dict, crs: CRS) -> pd.Series:
                 to_del.remove(longest_index)
             connected_ways = [i for j, i in enumerate(connected_ways) if j not in to_del]
         if len(connected_ways) > 1:
-            connected_ways = _link_unconnected(connected_ways)
+            path = _link_unconnected(connected_ways)
         else:
-            if connected_ways == []:
+            if not connected_ways or not connected_ways[0]:
                 raise Exception("No connected ways")
-            connected_ways = connected_ways[0]
+            path = connected_ways[0]
 
     else:
-        connected_ways = None
+        path = None
 
-    return pd.Series({"path": connected_ways, "platforms": platforms, "stops": stops, "route": transport_name})
+    extra = extract_needed(loc, needed_tags)
+
+    return pd.Series(
+        {"path": path, "platforms": platforms, "stops": stops, "route": transport_name, "extra_data": extra}
+    )
 
 
 def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> DataFrame | None:
@@ -188,6 +225,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     platforms = loc.platforms
     stops = loc.stops
     path = loc.path
+    extra_data = loc.extra_data
 
     def add_node(desc, x, y, transport=None):
         x = round(x, 5)
@@ -200,12 +238,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     def add_edge(u, v, geometry=None, transport=None):
         if not transport:
             graph_data.append(
-                {
-                    "u": (loc_id, u),
-                    "v": (loc_id, v),
-                    "route": name,
-                    "type": "boarding",
-                }
+                {"u": (loc_id, u), "v": (loc_id, v), "route": name, "type": "boarding", "extra_data": extra_data}
             )
         else:
             graph_data.append(
@@ -215,6 +248,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
                     "geometry": LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords]),
                     "route": name,
                     "type": transport_type,
+                    "extra_data": extra_data,
                 }
             )
 
@@ -335,9 +369,9 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     return to_return
 
 
-def parse_overpass_to_edgenode(loc, crs) -> pd.DataFrame | None:
+def parse_overpass_to_edgenode(loc, crs, needed_tags) -> pd.DataFrame | None:
     loc_id = loc.name
     transport_type = loc.transport_type
-    parsed_geometry = parse_overpass_route_response(loc, crs)
+    parsed_geometry = parse_overpass_route_response(loc, crs, needed_tags)
     edgenode = geometry_to_graph_edge_node_df(parsed_geometry, transport_type, loc_id)
     return edgenode

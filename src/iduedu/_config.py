@@ -27,6 +27,7 @@ class Config:
         self.logger = logger
         self.drive_useful_edges_attr = {"highway", "name", "lanes"}
         self.walk_useful_edges_attr = {"highway", "name"}
+        self.transport_useful_edges_attr = {"name"}
 
     def set_logger_lvl(self, lvl: Literal["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]):
         self.logger.remove()
