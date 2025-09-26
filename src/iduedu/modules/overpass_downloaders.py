@@ -99,7 +99,8 @@ def _overpass_request(
     if pause > 0:
         logger.warning(f"Waiting {pause} seconds for available Overpass API slot")
         time.sleep(pause)
-
+    # Sleep anyway to not get 429 to many requests
+    time.sleep(0.5)
     try:
         if method == "GET":
             resp = requests.get(overpass_url, params=params, timeout=timeout or config.timeout)
@@ -197,6 +198,9 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
     data = pd.DataFrame(json_result)
     data["transport_type"] = public_transport_type
     return data
+
+def get_subway_entrances():
+    pass
 
 
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:

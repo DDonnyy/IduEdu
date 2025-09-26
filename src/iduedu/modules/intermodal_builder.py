@@ -2,6 +2,7 @@ import concurrent.futures
 import time
 
 import networkx as nx
+import geopandas as gpd
 from shapely import MultiPolygon, Polygon
 
 from iduedu import config
@@ -15,15 +16,14 @@ logger = config.logger
 
 
 def get_intermodal_graph(
+    *,
     osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    clip_by_bounds: bool = False,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
+    clip_by_territory: bool = False,
     keep_routes_geom: bool = True,
     max_dist: float = 30,
     transport_types: list[PublicTrasport] = None,
     retain_all: bool = False,
-    **osmnx_kwargs,
 ) -> nx.Graph:
     """
     Generate an intermodal transport graph that combines public transport and pedestrian networks,
@@ -33,12 +33,9 @@ def get_intermodal_graph(
     ----------
     osm_id : int, optional
         OpenStreetMap ID of the territory. Either this or `territory_name` must be provided.
-    territory_name : str, optional
-        Name of the territory to generate the intermodal transport network for.
-        Either this or `osm_id` must be provided.
-    polygon : Polygon | MultiPolygon, optional
+    territory : Polygon | MultiPolygon | gpd.GeoDataFrame, optional
         A custom polygon or MultiPolygon defining the area for the intermodal network. Must be in CRS 4326.
-    clip_by_bounds : bool, optional
+    clip_by_territory : bool, optional
         If True, clips the public transport network to the bounds of the provided polygon. Defaults to False.
     keep_routes_geom : bool, optional
     max_dist : float, optional
@@ -69,7 +66,7 @@ def get_intermodal_graph(
 
     Examples
     --------
-    >>> intermodal_graph = get_intermodal_graph(osm_id=1114252, clip_by_bounds=True)
+    >>> intermodal_graph = get_intermodal_graph(osm_id=1114252, clip_by_territory=True)
     >>> intermodal_graph = get_intermodal_graph(territory_name="Санкт-Петербург", polygon=some_polygon)
 
     Notes
@@ -79,9 +76,9 @@ def get_intermodal_graph(
     If the public transport graph is empty, only the pedestrian graph is returned.
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
-    boundary = get_4326_boundary(osm_id, territory_name, polygon)
+    boundary = get_4326_boundary(osm_id, territory)
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        walk_graph_future = executor.submit(get_walk_graph, polygon=boundary, retain_all=retain_all, **osmnx_kwargs)
+        walk_graph_future = executor.submit(get_walk_graph, polygon=boundary, retain_all=retain_all)
         logger.debug("Started downloading and parsing walk graph...")
 
         # Sleep to not get 429 to many requests
@@ -89,7 +86,7 @@ def get_intermodal_graph(
         pt_graph_future = executor.submit(
             get_all_public_transport_graph,
             polygon=boundary,
-            clip_by_bounds=clip_by_bounds,
+            clip_by_bounds=clip_by_territory,
             keep_geometry=keep_routes_geom,
             transport_types=transport_types,
             **{},

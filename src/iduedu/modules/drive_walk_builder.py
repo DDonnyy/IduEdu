@@ -92,14 +92,14 @@ def get_drive_graph(
     *,
     osm_id: int | None = None,
     territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
-    osm_edge_tags: list[str] | None = None,  # overrides default tags
-    keep_largest_subgraph: bool = True,
     simplify: bool = True,
-    road_type: Literal["drive", "drive_service", "custom"] = "drive",
-    custom_filter: str | None = None,
     add_road_category: bool = True,
+    clip_by_territory: bool = False,
+    keep_largest_subgraph: bool = True,
+    network_type: Literal["drive", "drive_service", "custom"] = "drive",
+    custom_filter: str | None = None,
+    osm_edge_tags: list[str] | None = None,  # overrides default tags
     keep_edge_geometry: bool = True,
-    clip_by_territory: bool = False, # TODO клипать или нет, вроде просто .clip гдфку
 ) -> nx.MultiDiGraph:
 
     polygon4326 = get_4326_boundary(osm_id, territory)
@@ -110,10 +110,10 @@ def get_drive_graph(
         "custom": custom_filter,
     }
     try:
-        road_filter = filters[road_type]
+        road_filter = filters[network_type]
     except KeyError:
-        raise ValueError(f"Unknown road_type: {road_type!r}")
-    if road_type == "custom" and road_filter is None:
+        raise ValueError(f"Unknown road_type: {network_type!r}")
+    if network_type == "custom" and road_filter is None:
         raise ValueError("For road_type='custom' you must provide custom_filter")
 
     logger.info("Downloading drive network via Overpass ...")
@@ -131,6 +131,10 @@ def get_drive_graph(
         index=edges.index,
     )
     edges = edges.join(tags_df)
+
+    if clip_by_territory:
+        clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
+        edges = edges.clip(clip_poly_gdf, keep_geom_type=True)
 
     # двусторонние — дублируем с реверсом
     two_way = edges[edges["oneway"] != "yes"].copy()
@@ -177,36 +181,66 @@ def get_drive_graph(
     attrs_iter = edges[edge_attr_cols].to_dict("records")
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
-    if not keep_largest_subgraph:
+    if keep_largest_subgraph:
         graph = keep_largest_strongly_connected_component(graph)
 
     mapping = {old: new for new, old in enumerate(graph.nodes())}
     graph = nx.relabel_nodes(graph, mapping)
     graph.graph["crs"] = local_crs
-    graph.graph["type"] = road_type
+    graph.graph["type"] = network_type
     logger.debug("Drive graph built.")
     return graph
 
 
 def get_walk_graph(
+    *,
     osm_id: int | None = None,
-    polygon=None,
-    walk_speed: float = 5 * 1000 / 60,  # m/min
-    retain_all: bool = False,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
     simplify: bool = True,
-    road_filter: str | None = None,
+    clip_by_territory: bool = False,
+    keep_largest_subgraph: bool = True,
+    walk_speed: float = 5 * 1000 / 60,  # m/min
+    network_type: Literal["walk", "custom"] = "walk",
+    custom_filter: str | None = None,
+    osm_edge_tags: list[str] | None = None,  # overrides default tags
+    keep_edge_geometry: bool = True,
 ) -> nx.MultiDiGraph:
 
-    polygon = get_4326_boundary(osm_id, polygon)
-    if road_filter is None:
-        road_filter = Network.WALK.filter
+    polygon4326 = get_4326_boundary(osm_id, territory)
+
+    filters = {
+        "walk": Network.WALK.filter,
+        "custom": custom_filter,
+    }
+    try:
+        road_filter = filters[network_type]
+    except KeyError:
+        raise ValueError(f"Unknown road_type: {network_type!r}")
+    if network_type == "custom" and road_filter is None:
+        raise ValueError("For road_type='custom' you must provide custom_filter")
 
     logger.info("Downloading walk network via Overpass ...")
-    edges, local_crs = _build_edges_from_overpass(polygon, road_filter, simplify=simplify)
+    edges, local_crs = _build_edges_from_overpass(polygon4326, road_filter, simplify=simplify)
 
-    # длина/время
-    edges["length_meter"] = edges.geometry.length.round(3)
-    edges["time_min"] = (edges["length_meter"] / walk_speed).round(3)
+    if osm_edge_tags is None:
+        needed_tags = set(config.walk_useful_edges_attr)
+    else:
+        needed_tags = set(osm_edge_tags)
+
+    tags_df = pd.DataFrame.from_records(
+        ({k: v for k, v in d.items() if k in needed_tags} for d in edges["tags"]),
+        index=edges.index,
+    )
+    edges = edges.join(tags_df)
+
+    if clip_by_territory:
+        clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
+        edges = edges.clip(clip_poly_gdf, keep_geom_type=True)
+
+
+    two_way = edges.copy()
+    two_way.geometry = two_way.geometry.reverse()
+    edges = pd.concat([edges, two_way], ignore_index=True)
 
     # u/v и узлы
     coords = edges.geometry.get_coordinates().to_numpy()
@@ -225,20 +259,28 @@ def get_walk_graph(
     u = labels[:n]
     v = labels[n:]
 
-    G = nx.MultiDiGraph()
-    for i, (x, y) in enumerate(uniques):
-        G.add_node(i, x=float(x), y=float(y), geometry=Point(x, y))
+    edges["length_meter"] = edges.geometry.length.round(3)
+    edges["time_min"] = (edges["length_meter"] / float(walk_speed)).round(3)
 
-    attrs_iter = edges[["length_meter", "time_min", "geometry"]].to_dict("records")
-    G.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
+    # Сборка графа
+    graph = nx.MultiDiGraph()
+    graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 
-    if not retain_all:
-        G = keep_largest_strongly_connected_component(G)
+    edge_attrs = set(needed_tags)
+    if keep_edge_geometry:
+        edge_attrs |= {"geometry"}
+    edge_attrs |= {"length_meter", "time_min"}
 
-    mapping = {old: new for new, old in enumerate(G.nodes())}
-    G = nx.relabel_nodes(G, mapping)
-    G.graph["crs"] = local_crs
-    G.graph["walk_speed"] = walk_speed
-    G.graph["type"] = "walk"
+    attrs_iter = edges[list(edge_attrs)].to_dict("records")
+    graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
+
+    if keep_largest_subgraph:
+        graph = keep_largest_strongly_connected_component(graph)
+
+    mapping = {old: new for new, old in enumerate(graph.nodes())}
+    graph = nx.relabel_nodes(graph, mapping)
+    graph.graph["crs"] = local_crs
+    graph.graph["walk_speed"] = float(walk_speed)
+    graph.graph["type"] = network_type
     logger.debug("Walk graph built.")
-    return G
+    return graph

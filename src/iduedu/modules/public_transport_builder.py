@@ -82,22 +82,21 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
 
 
 def _get_multi_routes_by_poly(args):
-    polygon, transport = args
-    return get_routes_by_poly(polygon, transport)
+    return get_routes_by_poly(*args)
 
 
 def _multi_process_row(args):
-    row, local_crs = args
-    return parse_overpass_to_edgenode(row, local_crs)
+    return parse_overpass_to_edgenode(*args)
 
 
 def get_single_public_transport_graph(
     public_transport_type: str | PublicTrasport,
+    *,
     osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    clip_by_bounds: bool = False,
-    keep_geometry: bool = True,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
+    clip_by_territory: bool = False,
+    keep_edge_geometry: bool = True,
+    osm_edge_tags: list[str] | None = None,  # overrides default tags
 ):
     """
     Generate a graph of a specific type of public transport network within a given territory or polygon.
@@ -109,15 +108,13 @@ def get_single_public_transport_graph(
         Type of public transport to generate the graph for. Examples include "bus", "tram", "subway", etc.
     osm_id : int, optional
         OpenStreetMap ID of the territory. Either this or `territory_name` must be provided.
-    territory_name : str, optional
-        Name of the territory to generate the transport network for. Either this or `osm_id` must be provided.
-    polygon : Polygon | MultiPolygon, optional
+    territory : Polygon | MultiPolygon | gpd.GeoDataFrame |, optional
         A custom polygon or MultiPolygon to define the area for the transport network. Must be in CRS 4326.
-    clip_by_bounds : bool, optional
+    clip_by_territory : bool, optional
         If True, clips the resulting graph to the bounds of the provided polygon. Defaults to False.
-    keep_geometry : bool, optional
+    keep_edge_geometry : bool, optional
         If True, retains the original geometry of the transport routes. Defaults to True.
-
+    # TODO  add docstrings
     Returns
     -------
     networkx.Graph
@@ -128,15 +125,11 @@ def get_single_public_transport_graph(
     ValueError
         If no valid `osm_id`, `territory_name`, or `polygon` is provided.
 
-    Warnings
-    --------
-    Logs a warning if no public transport routes are found in the specified area.
-
     Examples
     --------
     >>> bus_graph = get_single_public_transport_graph(public_transport_type="bus", osm_id=1114252)
     >>> tram_graph = get_single_public_transport_graph(territory_name="Санкт-Петербург", public_transport_type="tram")
-    >>> metro_graph = get_single_public_transport_graph(polygon=poly, public_transport_type="bus", clip_by_bounds=True)
+    >>> metro_graph = get_single_public_transport_graph(polygon=poly, public_transport_type="bus", clip_by_territory=True)
 
     Notes
     -----
@@ -144,50 +137,55 @@ def get_single_public_transport_graph(
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
 
-    polygon = get_4326_boundary(osm_id, territory_name, polygon)
+    polygon4326 = get_4326_boundary(osm_id, territory)
 
-    overpass_data = get_routes_by_poly(polygon, public_transport_type)
+    overpass_data = get_routes_by_poly(polygon4326, public_transport_type)
     if overpass_data.shape[0] == 0:
         logger.warning("No routes found for public transport.")
         return nx.Graph()
-    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
+    local_crs = estimate_crs_for_bounds(*polygon4326.bounds)
 
     if not config.enable_tqdm_bar:
         logger.debug("Parsing routes")
 
+    if osm_edge_tags is None:
+        needed_tags = set(config.transport_useful_edges_attr)
+    else:
+        needed_tags = set(osm_edge_tags)
+
     if overpass_data.shape[0] > 100:
         # Если много маршрутов - обрабатываем в параллели
-        n_cpus = multiprocessing.cpu_count()
-        rows = [(row, local_crs) for _, row in overpass_data.iterrows()]
+        rows = [(row, local_crs, needed_tags) for _, row in overpass_data.iterrows()]
         edgenode_for_routes = process_map(
             _multi_process_row, rows, desc="Parsing routes", chunksize=1, disable=not config.enable_tqdm_bar
         )
     else:
         tqdm.pandas(desc="Parsing routes data", disable=not config.enable_tqdm_bar)
         edgenode_for_routes = overpass_data.progress_apply(
-            lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
+            lambda x: parse_overpass_to_edgenode(x, local_crs, needed_tags), axis=1
         ).tolist()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
 
-    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_geometry)
+    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
     to_return.graph["crs"] = local_crs
     to_return.graph["type"] = public_transport_type
 
-    if clip_by_bounds:
-        polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).union_all()
-        return clip_nx_graph(to_return, polygon)
+    if clip_by_territory:
+        polygon4326 = gpd.GeoSeries([polygon4326], crs=4326).to_crs(local_crs).union_all()
+        return clip_nx_graph(to_return, polygon4326)
 
     logger.debug("Done!")
     return to_return
 
 
 def get_all_public_transport_graph(
+    *,
     osm_id: int | None = None,
-    territory_name: str | None = None,
-    polygon: Polygon | MultiPolygon | None = None,
-    clip_by_bounds: bool = False,
-    keep_geometry: bool = True,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None,
+    clip_by_territory: bool = False,
+    keep_edge_geometry: bool = True,
     transport_types: list[PublicTrasport] = None,
+    osm_edge_tags: list[str] | None = None,  # overrides default tags
 ) -> nx.Graph:
     """
     Generate a public transport network graph that includes all types of transport within a specified territory.
@@ -197,18 +195,16 @@ def get_all_public_transport_graph(
     ----------
     osm_id : int, optional
         OpenStreetMap ID of the territory. Either this or `territory_name` must be provided.
-    territory_name : str, optional
-        Name of the territory to generate the public transport network for. Either this or `osm_id` must be provided.
-    polygon : Polygon | MultiPolygon, optional
+    territory : Polygon | MultiPolygon | gpd.GeoDataFrame, optional
         A custom polygon or MultiPolygon to define the area for the transport network. Must be in CRS 4326.
-    clip_by_bounds : bool, optional
+    clip_by_territory : bool, optional
         If True, clips the resulting graph to the bounds of the provided polygon. Defaults to False.
-    keep_geometry : bool, optional
+    keep_edge_geometry : bool, optional
         If True, retains the original geometry of the transport routes. Defaults to True.
     transport_types: list[PublicTransport], optional
         By default `[PublicTrasport.TRAM, PublicTrasport.BUS, PublicTrasport.TROLLEYBUS, PublicTrasport.SUBWAY]`,
         can be any combination of PublicTransport Enums.
-
+    # TODO  add docstrings
     Returns
     -------
     networkx.Graph
@@ -226,8 +222,8 @@ def get_all_public_transport_graph(
     Examples
     --------
     >>> all_transport_graph = get_all_public_transport_graph(osm_id=1114252)
-    >>> all_transport_graph = get_all_public_transport_graph(territory_name="Санкт-Петербург", clip_by_bounds=True)
-    >>> all_transport_graph = get_all_public_transport_graph(polygon=some_polygon, keep_geometry=False)
+    >>> all_transport_graph = get_all_public_transport_graph(territory_name="Санкт-Петербург", clip_by_territory=True)
+    >>> all_transport_graph = get_all_public_transport_graph(polygon=some_polygon, keep_edge_geometry=False)
 
     Notes
     -----
@@ -242,7 +238,7 @@ def get_all_public_transport_graph(
             if not isinstance(transport_type, PublicTrasport):
                 raise ValueError(f"transport_type {transport_type} is not a valid transport type.")
 
-    polygon = get_4326_boundary(osm_id, territory_name, polygon)
+    polygon = get_4326_boundary(osm_id, territory)
 
     transports = [transport.value for transport in transport_types]
     args_list = [(polygon, transport) for transport in transports]
@@ -266,11 +262,16 @@ def get_all_public_transport_graph(
 
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
+    if osm_edge_tags is None:
+        needed_tags = set(config.transport_useful_edges_attr)
+    else:
+        needed_tags = set(osm_edge_tags)
+
     if not config.enable_tqdm_bar:
         logger.debug("Parsing public transport routes")
     if overpass_data.shape[0] > 100:
         # Если много маршрутов - обрабатываем в параллели
-        rows = [(row, local_crs) for _, row in overpass_data.iterrows()]
+        rows = [(row, local_crs, needed_tags) for _, row in overpass_data.iterrows()]
         edgenode_for_routes = process_map(
             _multi_process_row,
             rows,
@@ -283,7 +284,7 @@ def get_all_public_transport_graph(
         edgenode_for_routes = [
             data
             for data in overpass_data.progress_apply(
-                lambda x: parse_overpass_to_edgenode(x, local_crs), axis=1
+                lambda x: parse_overpass_to_edgenode(x, local_crs, needed_tags), axis=1
             ).tolist()
             if data is not None
         ]
@@ -292,11 +293,11 @@ def get_all_public_transport_graph(
         logger.warning("No routes were parsed for public transport.")
         return nx.DiGraph()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_geometry)
+    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
     to_return.graph["crs"] = local_crs
     to_return.graph["type"] = "public_trasport"
 
-    if clip_by_bounds:
+    if clip_by_territory:
         polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).union_all()
         to_return = clip_nx_graph(to_return, polygon)
 
