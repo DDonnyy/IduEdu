@@ -180,6 +180,8 @@ def _poly_to_overpass(poly: Polygon) -> str:
 
 
 def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataFrame:
+    if public_transport_type == "subway":
+        return get_subway_routes_by_poly(polygon)
     polygon_coords = _poly_to_overpass(polygon)
     overpass_query = f"""
         [out:json][timeout:{config.timeout}];
@@ -199,8 +201,29 @@ def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataF
     data["transport_type"] = public_transport_type
     return data
 
-def get_subway_entrances():
-    pass
+
+def get_subway_routes_by_poly(polygon: Polygon) -> pd.DataFrame:
+    polygon_coords = _poly_to_overpass(polygon)
+    overpass_query = f"""
+        [out:json][timeout:500];
+            rel(poly:"{polygon_coords}")["route"="subway"]->.routes;
+            node(r.routes)-> .route_nodes;
+            rel(bn.route_nodes)->.stop_areas;
+            .stop_areas     out geom qt;
+        """
+    logger.debug(f"Downloading subway routes data from OSM ...")
+    resp = _overpass_request(
+        method="POST",
+        overpass_url=config.overpass_url,
+        data={"data": overpass_query},
+    )
+    json_result = resp.json()["elements"]
+    if len(json_result) == 0:
+        return pd.DataFrame()
+
+    for e in json_result:
+        e["platform_stop_data"] = e["type"] == "relation" and e.get("tags").get("public_transport") == "stop_area"
+    return pd.DataFrame(json_result)
 
 
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:

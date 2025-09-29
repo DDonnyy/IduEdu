@@ -81,12 +81,97 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
     return graph
 
 
-def _get_multi_routes_by_poly(args):
+def _multi_get_routes_by_poly(args):
     return get_routes_by_poly(*args)
 
 
-def _multi_process_row(args):
+def _multi_parse_overpass_to_edgenode(args):
     return parse_overpass_to_edgenode(*args)
+
+
+def _get_public_transport_graph(
+    osm_id: int,
+    territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None,
+    transport_types: list[str],
+    osm_edge_tags: list[str],
+    clip_by_territory: bool = False,
+    keep_edge_geometry: bool = True,
+):
+
+    polygon = get_4326_boundary(osm_id, territory)
+
+    args_list = [(polygon, transport) for transport in transport_types]
+
+    if not config.enable_tqdm_bar:
+        logger.debug("Downloading pt routes")
+
+    platform_stop_data_use = False
+    if "subway" in transport_types:
+        platform_stop_data_use = True
+
+    overpass_data = pd.concat(
+        thread_map(
+            _multi_get_routes_by_poly,
+            args_list,
+            desc="Downloading public transport routes from OSM",
+            disable=not config.enable_tqdm_bar,
+        ),
+        ignore_index=True,
+    ).reset_index(drop=True)
+
+    if overpass_data.shape[0] == 0:
+        logger.warning("No routes found for public transport.")
+        return nx.Graph()
+
+    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
+
+    if osm_edge_tags is None:
+        needed_tags = set(config.transport_useful_edges_attr)
+    else:
+        needed_tags = set(osm_edge_tags)
+
+    if platform_stop_data_use:
+        routes_data = overpass_data[~overpass_data["platform_stop_data"]].copy()
+        platform_stop_data = overpass_data[overpass_data["platform_stop_data"]].copy()
+    else:
+        routes_data = overpass_data.copy()
+
+    if not config.enable_tqdm_bar:
+        logger.debug("Parsing public transport routes")
+    if overpass_data.shape[0] > 100:
+        # Если много маршрутов - обрабатываем в параллели
+        rows = [(row, local_crs, needed_tags) for _, row in routes_data.iterrows()]
+        edgenode_for_routes = process_map(
+            _multi_parse_overpass_to_edgenode,
+            rows,
+            desc="Parsing public transport routes",
+            chunksize=1,
+            disable=not config.enable_tqdm_bar,
+        )
+    else:
+        tqdm.pandas(desc="Parsing public transport routes", disable=not config.enable_tqdm_bar)
+        edgenode_for_routes = [
+            data
+            for data in routes_data.progress_apply(
+                lambda x: parse_overpass_to_edgenode(x, local_crs, needed_tags), axis=1
+            ).tolist()
+            if data is not None
+        ]
+
+    if len(edgenode_for_routes) == 0:
+        logger.warning("No routes were parsed for public transport.")
+        return nx.DiGraph()
+    graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
+    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
+    to_return.graph["crs"] = local_crs
+    to_return.graph["type"] = "public_trasport"
+
+    if clip_by_territory:
+        polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).union_all()
+        to_return = clip_nx_graph(to_return, polygon)
+
+    logger.debug("Done!")
+    return to_return
 
 
 def get_single_public_transport_graph(
@@ -136,46 +221,17 @@ def get_single_public_transport_graph(
     The function uses OpenStreetMap data and processes public transport routes in parallel.
     The CRS for the graph is estimated based on the bounds of the provided/downloaded polygon, stored in G.graph['crs'].
     """
-
-    polygon4326 = get_4326_boundary(osm_id, territory)
-
-    overpass_data = get_routes_by_poly(polygon4326, public_transport_type)
-    if overpass_data.shape[0] == 0:
-        logger.warning("No routes found for public transport.")
-        return nx.Graph()
-    local_crs = estimate_crs_for_bounds(*polygon4326.bounds)
-
-    if not config.enable_tqdm_bar:
-        logger.debug("Parsing routes")
-
-    if osm_edge_tags is None:
-        needed_tags = set(config.transport_useful_edges_attr)
-    else:
-        needed_tags = set(osm_edge_tags)
-
-    if overpass_data.shape[0] > 100:
-        # Если много маршрутов - обрабатываем в параллели
-        rows = [(row, local_crs, needed_tags) for _, row in overpass_data.iterrows()]
-        edgenode_for_routes = process_map(
-            _multi_process_row, rows, desc="Parsing routes", chunksize=1, disable=not config.enable_tqdm_bar
-        )
-    else:
-        tqdm.pandas(desc="Parsing routes data", disable=not config.enable_tqdm_bar)
-        edgenode_for_routes = overpass_data.progress_apply(
-            lambda x: parse_overpass_to_edgenode(x, local_crs, needed_tags), axis=1
-        ).tolist()
-    graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-
-    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
-    to_return.graph["crs"] = local_crs
-    to_return.graph["type"] = public_transport_type
-
-    if clip_by_territory:
-        polygon4326 = gpd.GeoSeries([polygon4326], crs=4326).to_crs(local_crs).union_all()
-        return clip_nx_graph(to_return, polygon4326)
-
-    logger.debug("Done!")
-    return to_return
+    public_transport_type = (
+        public_transport_type.value() if isinstance(public_transport_type, PublicTrasport) else public_transport_type
+    )
+    return _get_public_transport_graph(
+        osm_id=osm_id,
+        territory=territory,
+        transport_types=[public_transport_type],
+        osm_edge_tags=osm_edge_tags,
+        clip_by_territory=clip_by_territory,
+        keep_edge_geometry=keep_edge_geometry,
+    )
 
 
 def get_all_public_transport_graph(
@@ -238,68 +294,13 @@ def get_all_public_transport_graph(
             if not isinstance(transport_type, PublicTrasport):
                 raise ValueError(f"transport_type {transport_type} is not a valid transport type.")
 
-    polygon = get_4326_boundary(osm_id, territory)
+    transports = [transport.value for transport in transport_types if isinstance(transport, PublicTrasport)]
 
-    transports = [transport.value for transport in transport_types]
-    args_list = [(polygon, transport) for transport in transports]
-
-    if not config.enable_tqdm_bar:
-        logger.debug("Downloading pt routes")
-
-    overpass_data = pd.concat(
-        thread_map(
-            _get_multi_routes_by_poly,
-            args_list,
-            desc="Downloading public transport routes from OSM",
-            disable=not config.enable_tqdm_bar,
-        ),
-        ignore_index=True,
-    ).reset_index(drop=True)
-
-    if overpass_data.shape[0] == 0:
-        logger.warning("No routes found for public transport.")
-        return nx.Graph()
-
-    local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
-
-    if osm_edge_tags is None:
-        needed_tags = set(config.transport_useful_edges_attr)
-    else:
-        needed_tags = set(osm_edge_tags)
-
-    if not config.enable_tqdm_bar:
-        logger.debug("Parsing public transport routes")
-    if overpass_data.shape[0] > 100:
-        # Если много маршрутов - обрабатываем в параллели
-        rows = [(row, local_crs, needed_tags) for _, row in overpass_data.iterrows()]
-        edgenode_for_routes = process_map(
-            _multi_process_row,
-            rows,
-            desc="Parsing public transport routes",
-            chunksize=1,
-            disable=not config.enable_tqdm_bar,
-        )
-    else:
-        tqdm.pandas(desc="Parsing public transport routes", disable=not config.enable_tqdm_bar)
-        edgenode_for_routes = [
-            data
-            for data in overpass_data.progress_apply(
-                lambda x: parse_overpass_to_edgenode(x, local_crs, needed_tags), axis=1
-            ).tolist()
-            if data is not None
-        ]
-
-    if len(edgenode_for_routes) == 0:
-        logger.warning("No routes were parsed for public transport.")
-        return nx.DiGraph()
-    graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
-    to_return.graph["crs"] = local_crs
-    to_return.graph["type"] = "public_trasport"
-
-    if clip_by_territory:
-        polygon = gpd.GeoSeries([polygon], crs=4326).to_crs(local_crs).union_all()
-        to_return = clip_nx_graph(to_return, polygon)
-
-    logger.debug("Done!")
-    return to_return
+    return _get_public_transport_graph(
+        osm_id=osm_id,
+        territory=territory,
+        transport_types=transports,
+        osm_edge_tags=osm_edge_tags,
+        clip_by_territory=clip_by_territory,
+        keep_edge_geometry=keep_edge_geometry,
+    )
