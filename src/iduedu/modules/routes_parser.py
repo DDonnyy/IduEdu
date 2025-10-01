@@ -13,6 +13,7 @@ from shapely.ops import substring
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
+THRESHOLD_METERS = 100
 
 
 def _link_unconnected(disconnected_ways) -> list:
@@ -101,7 +102,8 @@ def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -
         filtered = route[route["role"].isin(roles)]
         if len(filtered) == 0:
             return None
-        return filtered.apply(transform_geometry, axis=1).tolist()
+
+        return filtered.apply(transform_geometry, axis=1).tolist(), filtered["ref"].tolist()
 
     def extract_needed(loc_obj: dict, keys: list[str]) -> dict | None:
         out = {}
@@ -147,8 +149,8 @@ def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -
 
     route = route.dropna(subset=["lat", "lon", "geometry"], how="all")
 
-    platforms = process_roles(route, PLATFORM_ROLES)
-    stops = process_roles(route, STOPS_ROLES)
+    platforms, platforms_refs = process_roles(route, PLATFORM_ROLES)
+    stops, stops_refs = process_roles(route, STOPS_ROLES)
 
     ways_df = route[(route["type"] == "way") & (route["role"].fillna("") == "")]
 
@@ -212,47 +214,37 @@ def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -
     extra = extract_needed(loc, needed_tags)
 
     return pd.Series(
-        {"path": path, "platforms": platforms, "stops": stops, "route": transport_name, "extra_data": extra}
+        {
+            "path": path,
+            "platforms": platforms,
+            "platforms_refs": platforms_refs,
+            "stops": stops,
+            "stops_refs": stops_refs,
+            "route": transport_name,
+            "extra_data": extra,
+        }
     )
 
 
 def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> DataFrame | None:
-    graph_data = []
-    node_id = 0
+
     name = loc.route
-    last_dist = None
     last_projected_stop_id = None
-    platforms = loc.platforms
-    stops = loc.stops
+
+    platforms = list(loc.platforms or [])  # same size ->
+    platforms_refs = list(loc.platforms_refs or [])
+
+    stops = list(loc.stops or [])
+    stops_refs = list(loc.stops_refs or [])
+
     path = loc.path
     extra_data = loc.extra_data
 
-    def add_node(desc, x, y, transport=None):
-        x = round(x, 5)
-        y = round(y, 5)
-        if not transport:
-            graph_data.append({"node_id": (loc_id, node_id), "point": (x, y), "route": name, "type": desc})
-        else:
-            graph_data.append({"node_id": (loc_id, node_id), "point": (x, y), "route": name, "type": transport_type})
+    if not path:
+        warnings.warn("В одном из маршрутов нет пути, пока не работаю с этим", UserWarning)
+        return None
 
-    def add_edge(u, v, geometry=None, transport=None):
-        if not transport:
-            graph_data.append(
-                {"u": (loc_id, u), "v": (loc_id, v), "route": name, "type": "boarding", "extra_data": extra_data}
-            )
-        else:
-            graph_data.append(
-                {
-                    "u": (loc_id, u),
-                    "v": (loc_id, v),
-                    "geometry": LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords]),
-                    "route": name,
-                    "type": transport_type,
-                    "extra_data": extra_data,
-                }
-            )
-
-    def offset_direction(point):
+    def _side_left_or_right(point):
         # 1 if left 0 if right для определения с какой стороны от линии точки
         dist = path.project(point)
 
@@ -268,7 +260,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             return 1
         return 0
 
-    def offset_point(point, direction, distance=5):
+    def _offset_point(point, direction, distance=7) -> tuple[float, float]:
         # для размещения платформы по одну сторону от пути на расстоянии
         dist = path.project(point)
         d1 = dist - 1 if dist - 1 > 0 else 0
@@ -293,12 +285,117 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         offset_y = nearest_pt_on_line.y + ny * distance
         return offset_x, offset_y
 
-    def process_platform(platform):
+    path = LineString(path)
+
+    items = []  # [(platform_coords, platform_ref, stop_coords, stop_ref), на выходе не может быть пары без платформы
+
+    platform_len, stops_len = len(platforms), len(stops)
+    matched_p, matched_s = set(), set()
+    pairs = {}  # p_idx -> s_idx
+
+    if platform_len and stops_len:
+        stop_tree = cKDTree(stops)
+        dists, idxs = stop_tree.query(platforms, k=2)  # Смотрим 2 ближайших соседа
+
+        if stops_len == 1:
+            dists = np.array(dists).reshape(platform_len, 1)
+            idxs = np.array(idxs, dtype=int).reshape(platform_len, 1)
+
+        candidates = []
+        for p_i in range(platform_len):
+            for rank in range(stops_len):
+                dist = float(dists[p_i][rank])
+                s_i = int(idxs[p_i][rank])
+                if dist <= THRESHOLD_METERS:
+                    candidates.append((dist, p_i, s_i))
+
+        candidates.sort(key=lambda t: t[0])
+        for dist, p_i, s_i in candidates:
+            if p_i not in matched_p and s_i not in matched_s:
+                pairs[p_i] = s_i
+                matched_p.add(p_i)
+                matched_s.add(s_i)
+
+    for p_i, s_i in pairs.items():
+        items.append(
+            {
+                "p": platforms[p_i],
+                "pref": platforms_refs[p_i],
+                "s": stops[s_i],
+                "sref": stops_refs[s_i],
+            }
+        )
+
+    if stops_len:
+        base_dir = _side_left_or_right(Point(platforms[platform_len // 2])) if platform_len else 1
+        for s_i in range(stops_len):
+            if s_i in matched_s:
+                continue
+            s_pt = Point(stops[s_i])
+            items.append(
+                {
+                    "p": _offset_point(s_pt, base_dir),
+                    "pref": None,  # new platform
+                    "s": s_pt.xy,
+                    "sref": stops_refs[s_i],
+                }
+            )
+
+    for p_i in range(platform_len):
+        if p_i in matched_p:
+            continue
+        items.append(
+            {
+                "p": platforms[p_i],
+                "pref": platforms_refs[p_i],
+                "s": None,
+                "sref": None,
+            }
+        )
+
+    if not items:
+        items.append({"p": _offset_point(path.interpolate(0), 1, 7), "pref": None, "s": None, "sref": None})
+        items.append({"p": _offset_point(path.interpolate(path.length), 1, 7), "pref": None, "s": None, "sref": None})
+
+    items.sort(key=lambda d: path.project(Point(d["p"])))
+
+    graph_data: list[dict] = []
+    node_id = 0
+    last_dist = None
+
+    def add_node(desc, x, y, transport=None, ref_id=None):
+        x = round(x, 5)
+        y = round(y, 5)
+        graph_data.append(
+            {
+                "node_id": (loc_id, node_id),
+                "point": (x, y),
+                "route": name,
+                "type": (transport_type if transport else desc),
+                "ref_id": ref_id,
+            }
+        )
+
+    def add_edge(u, v, geometry=None, transport=None):
+
+        payload = {
+            "u": (loc_id, u),
+            "v": (loc_id, v),
+            "route": name,
+            "type": (transport_type if transport else "boarding"),
+            "extra_data": extra_data,
+        }
+        if geometry is not None:
+            payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
+        graph_data.append(payload)
+
+    def process_platform(platform, idx):
         nonlocal node_id, last_dist, last_projected_stop_id
 
         dist = path.project(platform)
         projected_stop = path.interpolate(dist)
-        add_node("stop", projected_stop.x, projected_stop.y, transport=True)
+        add_node("stop", projected_stop.x, projected_stop.y, transport=True, ref_id=(stops_refs[idx]))
+
         if last_dist is not None:
             cur_path = substring(path, last_dist, dist)
             if isinstance(cur_path, Point):
@@ -307,63 +404,21 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         last_projected_stop_id = node_id
 
         node_id += 1
-        add_node("platform", platform.x, platform.y)
+        add_node("platform", platform.x, platform.y, ref_id=(platforms_refs[idx]))
         add_edge(node_id - 1, node_id)
         add_edge(node_id, node_id - 1)
         node_id += 1
         return dist, last_projected_stop_id, node_id
 
-    if not path:
-        warnings.warn("В одном из маршрутов нет пути, пока не работаю с этим", UserWarning)
-        return None
-    path = LineString(path)
-
-    # Если нет платформ
-    if not platforms:
-        if not stops:  # Строим маршрут по пути начало - конец
-            platforms = [offset_point(path.interpolate(0), 1, 7), offset_point(path.interpolate(path.length), 1, 7)]
-        else:  # Если есть только остановки - превращаем их в платформы
-            platforms = [offset_point(Point(stop), 1, 7) for stop in stops]
-            stops = None
-
-    stops = [] if not stops else stops
-
-    # Если остановок больше чем платформ - найти остановки без платформ и добавить новые платформы
-    if len(stops) > len(platforms):
-        stop_tree = cKDTree(stops)
-        _, indices = stop_tree.query(platforms)
-        connection = [(platforms[platform], stop) for platform, stop in enumerate(indices)]
-        connection += [(-1, stop) for stop in set(range(len(stops))) ^ set(indices)]
-        connection.sort(key=lambda x: x[1])
-        direction = offset_direction(Point(platforms[len(platforms) // 2]))
-        stops_to_platforms = {
-            stop: offset_point(Point(stops[stop]), direction, 7) for stop in set(range(len(stops))) ^ set(indices)
-        }
-        platforms = [coord if (coord != -1) else (stops_to_platforms.get(ind)) for coord, ind in connection]
-        stops = []
-
-    # Если получилось только одна платформа
-    if len(platforms) == 1:
-        platform = Point(platforms[0])
-        dist = path.project(platform)
-        if dist in (path.length, 0):  # Если платформа является конечной
-            platforms = [offset_point(path.interpolate(0), 1, 7), offset_point(path.interpolate(path.length), 1, 7)]
-        else:  # Если платформа не является конечной
-            platforms = [
-                offset_point(path.interpolate(0), 1, 7),
-                platform,
-                offset_point(path.interpolate(path.length), 1, 7),
-            ]
-    platforms = [Point(coords) for coords in platforms]
     if len(platforms) >= len(stops):
-        for platform in platforms:
+        for idx, platform in enumerate(platforms):
             if not last_dist:
-                last_dist, last_projected_stop_id, node_id = process_platform(platform)
+                last_dist, last_projected_stop_id, node_id = process_platform(platform, idx)
                 if last_dist > path.length / 2:
                     path = path.reverse()
                     last_dist = path.project(platform)
             else:
-                last_dist, last_projected_stop_id, node_id = process_platform(platform)
+                last_dist, last_projected_stop_id, node_id = process_platform(platform, idx)
 
     to_return = pd.DataFrame(graph_data)
     return to_return

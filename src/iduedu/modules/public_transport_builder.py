@@ -23,12 +23,14 @@ logger = config.logger
 def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
     platforms = graph_df[graph_df["type"] == "platform"].copy()
     platforms["point_group"] = platforms["point"].apply(lambda x: (round(x[0]), round(x[1])))
-    platforms = platforms.groupby("point_group", as_index=False).agg({"point": "first", "node_id": list, "route": list})
+    platforms = platforms.groupby("point_group", as_index=False).agg(
+        {"point": "first", "node_id": list, "route": list, "ref_id": list}
+    )
     platforms["type"] = "platform"
 
-    stops = graph_df[(graph_df["type"] != "platform") & (graph_df["u"].isna())][["point", "node_id", "route", "type"]]
+    stops = graph_df[(graph_df["type"] != "platform") & (graph_df["u"].isna())][["point", "node_id", "route", "type","ref_id"]]
     stops["point_group"] = stops["point"].apply(lambda x: (round(x[0]), round(x[1])))
-    stops = stops.groupby(["point_group", "route", "type"], as_index=False).agg({"point": "first", "node_id": list})
+    stops = stops.groupby(["point_group", "route", "type"], as_index=False).agg({"point": "first", "node_id": list,"ref_id": list})
     stops["route"] = stops["route"].apply(lambda x: [x])
 
     all_nodes = pd.concat([platforms, stops], ignore_index=True).drop(columns="point_group").reset_index(drop=True)
@@ -65,7 +67,7 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
         route = list(set(node["route"]))
         if len(route) == 1:
             route = route[0]
-        graph.add_node(i, x=node["point"][0], y=node["point"][1], type=node["type"], route=route)
+        graph.add_node(i, x=node["point"][0], y=node["point"][1], type=node["type"], route=route,ref_id=node["ref_id"])
     for i, edge in edges.iterrows():
         graph.add_edge(
             edge["u"],
@@ -102,13 +104,13 @@ def _get_public_transport_graph(
 
     args_list = [(polygon, transport) for transport in transport_types]
 
-    if not config.enable_tqdm_bar:
-        logger.debug("Downloading pt routes")
-
+    # Если парсим метро - ожидаем в ответе информацию о станциях
     platform_stop_data_use = False
     if "subway" in transport_types:
         platform_stop_data_use = True
 
+    if not config.enable_tqdm_bar:
+        logger.debug("Downloading pt routes")
     overpass_data = pd.concat(
         thread_map(
             _multi_get_routes_by_poly,
@@ -125,11 +127,13 @@ def _get_public_transport_graph(
 
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
+    # необходимые osm теги из relation маршрута
     if osm_edge_tags is None:
         needed_tags = set(config.transport_useful_edges_attr)
     else:
         needed_tags = set(osm_edge_tags)
 
+    # Отделяем станции от маршрутов при необходимости
     if platform_stop_data_use:
         routes_data = overpass_data[~overpass_data["platform_stop_data"]].copy()
         platform_stop_data = overpass_data[overpass_data["platform_stop_data"]].copy()
@@ -140,10 +144,9 @@ def _get_public_transport_graph(
         logger.debug("Parsing public transport routes")
     if overpass_data.shape[0] > 100:
         # Если много маршрутов - обрабатываем в параллели
-        rows = [(row, local_crs, needed_tags) for _, row in routes_data.iterrows()]
         edgenode_for_routes = process_map(
             _multi_parse_overpass_to_edgenode,
-            rows,
+            [(row, local_crs, needed_tags) for _, row in routes_data.iterrows()],
             desc="Parsing public transport routes",
             chunksize=1,
             disable=not config.enable_tqdm_bar,
