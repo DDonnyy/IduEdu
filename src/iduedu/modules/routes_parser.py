@@ -303,7 +303,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
 
         candidates = []
         for p_i in range(platform_len):
-            for rank in range(stops_len):
+            for rank in range(2):
                 dist = float(dists[p_i][rank])
                 s_i = int(idxs[p_i][rank])
                 if dist <= THRESHOLD_METERS:
@@ -335,7 +335,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             items.append(
                 {
                     "p": _offset_point(s_pt, base_dir),
-                    "pref": None,  # new platform
+                    "pref": f'from_{stops_refs[s_i]}',  # new platform
                     "s": s_pt.xy,
                     "sref": stops_refs[s_i],
                 }
@@ -349,7 +349,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
                 "p": platforms[p_i],
                 "pref": platforms_refs[p_i],
                 "s": None,
-                "sref": None,
+                "sref": f'from_{platforms_refs[p_i]}',
             }
         )
 
@@ -362,6 +362,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     graph_data: list[dict] = []
     node_id = 0
     last_dist = None
+    last_projected_stop_id = None
 
     def add_node(desc, x, y, transport=None, ref_id=None):
         x = round(x, 5)
@@ -389,36 +390,41 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
         graph_data.append(payload)
 
-    def process_platform(platform, idx):
-        nonlocal node_id, last_dist, last_projected_stop_id
+    for item in items:
+        p_xy = item["p"]
+        p_ref = item.get("pref")
 
-        dist = path.project(platform)
-        projected_stop = path.interpolate(dist)
-        add_node("stop", projected_stop.x, projected_stop.y, transport=True, ref_id=(stops_refs[idx]))
+        s_xy = item["s"]
+        if s_xy is None:
+            s_xy = p_xy
+        s_ref = item.get("sref")
+
+        platform = Point(p_xy)
+        stop = Point(s_xy)
+
+        stop_dist = path.project(stop)
+
+        projected_stop = path.interpolate(stop_dist)
+        add_node("stop", projected_stop.x, projected_stop.y, transport=True, ref_id=s_ref)
 
         if last_dist is not None:
-            cur_path = substring(path, last_dist, dist)
-            if isinstance(cur_path, Point):
-                cur_path = LineString((cur_path, cur_path))
-            add_edge(last_projected_stop_id, node_id, geometry=cur_path, transport=True)
+            seg = substring(path, last_dist, stop_dist)
+            if isinstance(seg, Point):
+                seg = LineString((seg, seg))
+            add_edge(last_projected_stop_id, node_id, geometry=seg, transport=True)
+
         last_projected_stop_id = node_id
-
+        last_dist = stop_dist
         node_id += 1
-        add_node("platform", platform.x, platform.y, ref_id=(platforms_refs[idx]))
-        add_edge(node_id - 1, node_id)
-        add_edge(node_id, node_id - 1)
-        node_id += 1
-        return dist, last_projected_stop_id, node_id
 
-    if len(platforms) >= len(stops):
-        for idx, platform in enumerate(platforms):
-            if not last_dist:
-                last_dist, last_projected_stop_id, node_id = process_platform(platform, idx)
-                if last_dist > path.length / 2:
-                    path = path.reverse()
-                    last_dist = path.project(platform)
-            else:
-                last_dist, last_projected_stop_id, node_id = process_platform(platform, idx)
+        add_node("platform", platform.x, platform.y, ref_id=(p_ref))
+        boarding_geom = LineString([
+            (round(projected_stop.x, 5), round(projected_stop.y, 5)),
+            (round(platform.x, 5), round(platform.y, 5))
+        ])
+        add_edge(node_id - 1, node_id,geometry=boarding_geom)
+        add_edge(node_id, node_id - 1,geometry=boarding_geom)
+        node_id += 1
 
     to_return = pd.DataFrame(graph_data)
     return to_return

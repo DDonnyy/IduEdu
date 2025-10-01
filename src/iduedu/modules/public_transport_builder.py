@@ -28,9 +28,13 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
     )
     platforms["type"] = "platform"
 
-    stops = graph_df[(graph_df["type"] != "platform") & (graph_df["u"].isna())][["point", "node_id", "route", "type","ref_id"]]
+    stops = graph_df[(graph_df["type"] != "platform") & (graph_df["u"].isna())][
+        ["point", "node_id", "route", "type", "ref_id"]
+    ]
     stops["point_group"] = stops["point"].apply(lambda x: (round(x[0]), round(x[1])))
-    stops = stops.groupby(["point_group", "route", "type"], as_index=False).agg({"point": "first", "node_id": list,"ref_id": list})
+    stops = stops.groupby(["point_group", "route", "type"], as_index=False).agg(
+        {"point": "first", "node_id": list, "ref_id": "first"}
+    )
     stops["route"] = stops["route"].apply(lambda x: [x])
 
     all_nodes = pd.concat([platforms, stops], ignore_index=True).drop(columns="point_group").reset_index(drop=True)
@@ -67,7 +71,7 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
         route = list(set(node["route"]))
         if len(route) == 1:
             route = route[0]
-        graph.add_node(i, x=node["point"][0], y=node["point"][1], type=node["type"], route=route,ref_id=node["ref_id"])
+        graph.add_node(i, x=node["point"][0], y=node["point"][1], type=node["type"], route=route, ref_id=node["ref_id"])
     for i, edge in edges.iterrows():
         graph.add_edge(
             edge["u"],
