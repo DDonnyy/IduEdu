@@ -24,7 +24,7 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
     platforms = graph_df[graph_df["type"] == "platform"].copy()
     platforms["point_group"] = platforms["point"].apply(lambda x: (round(x[0]), round(x[1])))
     platforms = platforms.groupby("point_group", as_index=False).agg(
-        {"point": "first", "node_id": list, "route": list, "ref_id": list}
+        {"point": "first", "node_id": list, "route": list, "ref_id": "first"}
     )
     platforms["type"] = "platform"
 
