@@ -209,10 +209,13 @@ def get_subway_routes_by_poly(polygon: Polygon) -> pd.DataFrame:
             rel(poly:"{polygon_coords}")["route"="subway"]->.routes;
             node(r.routes)-> .route_nodes;
             rel(bn.route_nodes)->.stop_areas;
-            
+            rel(br.stop_areas)["public_transport"="stop_area_group"]["type"="public_transport"]->.groups;
+            nwr(r.stop_areas)["public_transport"="station"]->.stations;
             .stop_areas     out geom qt;
+            .groups         out body qt;
+            .stations       out tags qt;
         """
-    # rel(br.stop_areas)["public_transport"="stop_area_group"]["type"="public_transport"]->.groups; # TODO
+
     logger.debug(f"Downloading subway routes data from OSM ...")
     resp = _overpass_request(
         method="POST",
@@ -224,7 +227,16 @@ def get_subway_routes_by_poly(polygon: Polygon) -> pd.DataFrame:
         return pd.DataFrame()
 
     for e in json_result:
-        e["platform_stop_data"] = e["type"] == "relation" and e.get("tags").get("public_transport") == "stop_area"
+        tags = e.get("tags") or {}
+        etype = e.get("type")
+
+        e["is_stop_area"] = etype == "relation" and tags.get("public_transport") == "stop_area"
+        e["is_stop_area_group"] = (
+            etype == "relation"
+            and tags.get("public_transport") == "stop_area_group"
+            and tags.get("type") == "public_transport"
+        )
+        e["is_station"] = tags.get("public_transport") == "station"
 
     data = pd.DataFrame(json_result)
     data["transport_type"] = "subway"

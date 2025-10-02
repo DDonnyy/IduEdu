@@ -10,6 +10,10 @@ from scipy.spatial.distance import cdist
 from shapely import Point
 from shapely.geometry import LineString
 from shapely.ops import substring
+from collections import defaultdict
+from itertools import chain
+from shapely import LineString
+from itertools import combinations
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
@@ -229,7 +233,6 @@ def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -
 def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> DataFrame | None:
 
     name = loc.route
-    last_projected_stop_id = None
 
     platforms = list(loc.platforms or [])  # same size ->
     platforms_refs = list(loc.platforms_refs or [])
@@ -335,7 +338,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             items.append(
                 {
                     "p": _offset_point(s_pt, base_dir),
-                    "pref": f'from_{stops_refs[s_i]}',  # new platform
+                    "pref": f"from_{stops_refs[s_i]}",  # new platform
                     "s": s_pt.xy,
                     "sref": stops_refs[s_i],
                 }
@@ -349,7 +352,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
                 "p": platforms[p_i],
                 "pref": platforms_refs[p_i],
                 "s": None,
-                "sref": f'from_{platforms_refs[p_i]}',
+                "sref": f"from_{platforms_refs[p_i]}",
             }
         )
 
@@ -390,6 +393,13 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
         graph_data.append(payload)
 
+    if transport_type == "subway":
+        stop_str = "subway_stop"
+        platform_str = "subway_platform"
+    else:
+        stop_str = "stop"
+        platform_str = "platform"
+
     for item in items:
         p_xy = item["p"]
         p_ref = item.get("pref")
@@ -405,7 +415,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         stop_dist = path.project(stop)
 
         projected_stop = path.interpolate(stop_dist)
-        add_node("stop", projected_stop.x, projected_stop.y, transport=True, ref_id=s_ref)
+        add_node(stop_str, projected_stop.x, projected_stop.y, transport=True, ref_id=s_ref)
 
         if last_dist is not None:
             seg = substring(path, last_dist, stop_dist)
@@ -417,13 +427,12 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         last_dist = stop_dist
         node_id += 1
 
-        add_node("platform", platform.x, platform.y, ref_id=(p_ref))
-        boarding_geom = LineString([
-            (round(projected_stop.x, 5), round(projected_stop.y, 5)),
-            (round(platform.x, 5), round(platform.y, 5))
-        ])
-        add_edge(node_id - 1, node_id,geometry=boarding_geom)
-        add_edge(node_id, node_id - 1,geometry=boarding_geom)
+        add_node(platform_str, platform.x, platform.y, ref_id=(p_ref))
+        boarding_geom = LineString(
+            [(round(projected_stop.x, 5), round(projected_stop.y, 5)), (round(platform.x, 5), round(platform.y, 5))]
+        )
+        add_edge(node_id - 1, node_id, geometry=boarding_geom)
+        add_edge(node_id, node_id - 1, geometry=boarding_geom)
         node_id += 1
 
     to_return = pd.DataFrame(graph_data)
@@ -436,3 +445,128 @@ def parse_overpass_to_edgenode(loc, crs, needed_tags) -> pd.DataFrame | None:
     parsed_geometry = parse_overpass_route_response(loc, crs, needed_tags)
     edgenode = geometry_to_graph_edge_node_df(parsed_geometry, transport_type, loc_id)
     return edgenode
+
+
+def parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) -> tuple[pd.DataFrame, pd.DataFrame]:
+    graph_nodes = []
+    graph_edges = []
+
+    station_parent_ref = {}
+    osm_roles_to_iduedu = {
+        "station": "subway_station",
+        "stop": "subway_stop",
+        "platform": "subway_platform",
+        "entrance": "subway_platform",
+        "subway_entrance": "subway_entry_exit",
+        "entrance_yes": "subway_entry_exit",
+        "entrance_main": "subway_entry_exit",
+        "entry_only": "subway_entry",
+        "entrance_entry_only": "subway_entry",
+        "entry": "subway_entry",
+        "exit_only": "subway_exit",
+        "entrance_exit_only": "subway_exit",
+        "exit": "subway_exit",
+    }
+
+    def _collect_by_roles(members, parent_id):
+        """Собирает членов по ролям с учётом распространённых синонимов."""
+        roles = defaultdict(list)
+        for m in members or []:
+            role = (m.get("role") or "").lower()
+            roles[role].append(m)
+
+        # базовые наборы
+        stations = roles.get("station", [])
+        for s in stations:
+            station_parent_ref[parent_id] = s["ref"]
+        stops = roles.get("stop", [])
+        platforms = roles.get("platform", [])
+
+        # входы/выходы и варианты подписей
+        entrances = (
+            roles.get("entrance", [])
+            + roles.get("subway_entrance", [])
+            + roles.get("entrance_yes", [])
+            + roles.get("entrance_main", [])
+        )
+        entry_only = roles.get("entry_only", []) + roles.get("entrance_entry_only", []) + roles.get("entry", [])
+        exit_only = roles.get("exit_only", []) + roles.get("entrance_exit_only", []) + roles.get("exit", [])
+
+        return stations, stops, platforms, entrances, entry_only, exit_only
+
+    def add_node(ref_id, x, y, node_type):
+        graph_nodes.append(
+            {
+                "ref_id": int(ref_id),
+                "point": (x, y),
+                "type": osm_roles_to_iduedu.get(node_type),
+            }
+        )
+
+    def add_edge(u, v, edge_type):
+        graph_edges.append(
+            {
+                "u_ref": int(u),
+                "v_ref": int(v),
+                "type": edge_type,
+            }
+        )
+
+    for _, stop_area in stop_areas.iterrows():
+
+        members = stop_area["members"]
+        all_nodes = _collect_by_roles(members, stop_area["id"])
+
+        for node in chain.from_iterable(all_nodes):
+            if "geometry" in node:
+                new_lon, new_lat = LineString((xy["lon"], xy["lat"]) for xy in node["geometry"]).centroid.xy
+                node["lon"], node["lat"] = new_lon[0], new_lat[0]
+            if "lon" not in node:
+                node["lon"], node["lat"] = None, None
+
+            add_node(node["ref"], node["lon"], node["lat"], node["role"])
+
+        stations, stops, platforms, entrances, entry_only, exit_only = all_nodes
+
+        for stop in stops:
+            for platform in platforms:
+                add_edge(stop["ref"], platform["ref"], "boarding")
+                add_edge(platform["ref"], stop["ref"], "boarding")
+
+        for platform in platforms:
+            for station in stations:
+                add_edge(station["ref"], platform["ref"], "subway_station")
+                add_edge(platform["ref"], station["ref"], "subway_station")
+
+        for entrance in entrances:
+            for station in stations:
+                add_edge(entrance["ref"], station["ref"], "subway_entrance")
+                add_edge(station["ref"], entrance["ref"], "subway_exit")
+
+        for entrance in entry_only:
+            for station in stations:
+                add_edge(entrance["ref"], station["ref"], "subway_entrance")
+
+        for entrance in exit_only:
+            for station in stations:
+                add_edge(station["ref"], entrance["ref"], "subway_exit")
+
+    for _, stop_area_group in stop_areas_group.iterrows():
+        members = stop_area_group["members"]
+
+        connect_refs = [station_parent_ref[mem["ref"]] for mem in members if mem["ref"] in station_parent_ref]
+
+        pairs = list(combinations(connect_refs, 2))
+        for pair in pairs:
+            add_edge(pair[0], pair[1], "subway_transfer")
+            add_edge(pair[1], pair[0], "subway_transfer")
+    edges_gdf = pd.DataFrame(graph_edges)
+    nodes_gdf = pd.DataFrame(graph_nodes)
+
+    for _, station_data in stations_data.iterrows():
+        tags = station_data["tags"]
+        ref_id = station_data["id"]
+        station_ind = nodes_gdf[nodes_gdf["ref_id"] == int(ref_id)].index
+        nodes_gdf.loc[station_ind, ["depth", "name"]] = (tags.get("depth", 0), tags.get("name", ""))
+
+    return edges_gdf, nodes_gdf

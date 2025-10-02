@@ -9,7 +9,7 @@ from tqdm.contrib.concurrent import process_map, thread_map
 
 from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
-from iduedu.modules.routes_parser import parse_overpass_to_edgenode
+from iduedu.modules.routes_parser import parse_overpass_to_edgenode, parse_overpass_subway_data
 from iduedu.utils.utils import clip_nx_graph, estimate_crs_for_bounds
 
 from .overpass_downloaders import (
@@ -139,8 +139,13 @@ def _get_public_transport_graph(
 
     # Отделяем станции от маршрутов при необходимости
     if platform_stop_data_use:
-        routes_data = overpass_data[~overpass_data["platform_stop_data"]].copy()
-        platform_stop_data = overpass_data[overpass_data["platform_stop_data"]].copy()
+        routes_data = overpass_data[
+            ~((overpass_data["is_stop_area"]) | (overpass_data["is_stop_area_group"]) | (overpass_data["is_station"]))
+        ].copy()
+        stop_areas = overpass_data[overpass_data["is_stop_area"]].copy()
+        stop_areas_group = overpass_data[overpass_data["is_stop_area_group"]].copy()
+        stations_data = overpass_data[overpass_data["is_station"]].copy()
+        additional_edges,additional_nodes  = parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) # TODO
     else:
         routes_data = overpass_data.copy()
 
