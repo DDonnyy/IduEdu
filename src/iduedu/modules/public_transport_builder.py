@@ -20,7 +20,37 @@ from .overpass_downloaders import (
 logger = config.logger
 
 
-def _graph_data_to_nx(graph_df, keep_geometry: bool = True) -> nx.DiGraph:
+def _graph_data_to_nx(graph_df, keep_geometry: bool = True, additional_data=None) -> nx.DiGraph:
+
+    nodes_col = ["node_id", "point", "route", "type", "ref_id", "extra_data"]
+    edges_col = ["u", "v","type","extra_data", "geometry"]
+    graph_nodes = graph_df[~graph_df["node_id"].isna()][nodes_col].copy()
+    graph_edges = graph_df[graph_df["node_id"].isna()][edges_col].copy()
+    if additional_data is not None:
+        edges_to_add, nodes_to_add = additional_data
+        graph_nodes_combined = graph_nodes.merge(nodes_to_add, left_on="ref_id", right_on="ref_id", how="outer")
+        for column in nodes_col:
+            if column in graph_nodes_combined.columns:
+                continue
+            else:
+                graph_nodes_combined[column] = graph_nodes_combined[f"{column}_x"].combine_first(
+                    graph_nodes_combined[f"{column}_y"]
+                )
+        graph_nodes_combined = graph_nodes_combined[nodes_col]
+
+        no_point_refs = graph_nodes_combined[(graph_nodes_combined['point'].isna())&(~graph_nodes_combined['ref_id'].isna())][['ref_id']].copy()
+        no_point_refs = no_point_refs.merge(edges_to_add[["v_ref",'u_ref']], left_on="ref_id", right_on="v_ref")
+
+        gnm = graph_nodes.drop_duplicates("ref_id").dropna(subset="ref_id")
+        refid2nodeid = gnm.set_index("ref_id")["node_id"]
+
+        nodeid2refid = gnm[gnm['type']=='subway_platform'].set_index("node_id")["ref_id"]
+
+
+        no_point_refs["u_node_id"] = no_point_refs["u_ref"].map(refid2nodeid)
+        no_point_refs = no_point_refs.dropna(subset='u_node_id').merge(graph_edges[['u','v']], left_on="u_node_id", right_on="u", how="left").drop(columns=["u"])
+        no_point_refs['potential'] = no_point_refs["v"].map(nodeid2refid) # v_ref -> from... замену надо сделать #TODO
+
     platforms = graph_df[graph_df["type"] == "platform"].copy()
     platforms["point_group"] = platforms["point"].apply(lambda x: (round(x[0]), round(x[1])))
     platforms = platforms.groupby("point_group", as_index=False).agg(
@@ -145,9 +175,10 @@ def _get_public_transport_graph(
         stop_areas = overpass_data[overpass_data["is_stop_area"]].copy()
         stop_areas_group = overpass_data[overpass_data["is_stop_area_group"]].copy()
         stations_data = overpass_data[overpass_data["is_station"]].copy()
-        additional_edges,additional_nodes  = parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) # TODO
+        add_data = parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data, local_crs)
     else:
         routes_data = overpass_data.copy()
+        add_data = None
 
     if not config.enable_tqdm_bar:
         logger.debug("Parsing public transport routes")
@@ -174,7 +205,7 @@ def _get_public_transport_graph(
         logger.warning("No routes were parsed for public transport.")
         return nx.DiGraph()
     graph_df = pd.concat(edgenode_for_routes, ignore_index=True)
-    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry)
+    to_return = _graph_data_to_nx(graph_df, keep_geometry=keep_edge_geometry, additional_data=add_data)
     to_return.graph["crs"] = local_crs
     to_return.graph["type"] = "public_trasport"
 

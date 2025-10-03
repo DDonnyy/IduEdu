@@ -427,7 +427,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         last_dist = stop_dist
         node_id += 1
 
-        add_node(platform_str, platform.x, platform.y, ref_id=(p_ref))
+        add_node(platform_str, platform.x, platform.y, ref_id=p_ref)
         boarding_geom = LineString(
             [(round(projected_stop.x, 5), round(projected_stop.y, 5)), (round(platform.x, 5), round(platform.y, 5))]
         )
@@ -447,16 +447,20 @@ def parse_overpass_to_edgenode(loc, crs, needed_tags) -> pd.DataFrame | None:
     return edgenode
 
 
-def parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) -> tuple[pd.DataFrame, pd.DataFrame]:
+def parse_overpass_subway_data(
+    stop_areas, stop_areas_group, stations_data, to_crs
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     graph_nodes = []
     graph_edges = []
+
+    transformer = Transformer.from_crs("EPSG:4326", to_crs, always_xy=True)
 
     station_parent_ref = {}
     osm_roles_to_iduedu = {
         "station": "subway_station",
-        "stop": "subway_stop",
+        "stop": "subway",
         "platform": "subway_platform",
-        "entrance": "subway_platform",
+        "entrance": "subway_entry_exit",
         "subway_entrance": "subway_entry_exit",
         "entrance_yes": "subway_entry_exit",
         "entrance_main": "subway_entry_exit",
@@ -495,10 +499,16 @@ def parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) -> t
         return stations, stops, platforms, entrances, entry_only, exit_only
 
     def add_node(ref_id, x, y, node_type):
+
+        if x is None or y is None:
+            point = None
+        else:
+            point = transformer.transform(x, y)
+
         graph_nodes.append(
             {
                 "ref_id": int(ref_id),
-                "point": (x, y),
+                "point": point,
                 "type": osm_roles_to_iduedu.get(node_type),
             }
         )
@@ -562,11 +572,12 @@ def parse_overpass_subway_data(stop_areas, stop_areas_group, stations_data) -> t
             add_edge(pair[1], pair[0], "subway_transfer")
     edges_gdf = pd.DataFrame(graph_edges)
     nodes_gdf = pd.DataFrame(graph_nodes)
-
+    nodes_gdf['extra_data'] = {}
     for _, station_data in stations_data.iterrows():
         tags = station_data["tags"]
         ref_id = station_data["id"]
         station_ind = nodes_gdf[nodes_gdf["ref_id"] == int(ref_id)].index
-        nodes_gdf.loc[station_ind, ["depth", "name"]] = (tags.get("depth", 0), tags.get("name", ""))
-
+        extra_data = {k: v for k, v in tags.items() if k in ["name", "depth"]}
+        extra_data["depth"] = extra_data.get("depth", 0)
+        nodes_gdf.loc[station_ind, "extra_data"] = [extra_data for _ in station_ind]
     return edges_gdf, nodes_gdf
