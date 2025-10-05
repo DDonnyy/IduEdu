@@ -1,6 +1,7 @@
 import datetime as dt
 import math
 import time
+from collections import defaultdict
 from typing import Literal
 
 import pandas as pd
@@ -12,6 +13,45 @@ from shapely.ops import polygonize
 from iduedu import config
 
 logger = config.logger
+
+import threading
+from time import monotonic
+from email.utils import parsedate_to_datetime
+
+
+class RateLimiter:
+    def __init__(self, min_interval: float):
+        self.min_interval = float(min_interval)
+        self._next_ts = 0.0
+        self._cv = threading.Condition()
+
+    def wait(self):
+        start = monotonic()
+        with self._cv:
+            while True:
+                now = monotonic()
+                if now >= self._next_ts:
+                    # фиксированное расписание слотов
+                    self._next_ts = max(self._next_ts, now) + self.min_interval
+                    slept = monotonic() - start
+                    # logger.info(f"GRANT; slept={slept:.3f}s; next_slot_in={self._next_ts - now:.3f}s")
+                    self._cv.notify_all()
+                    return
+                to_sleep = self._next_ts - now
+                # logger.info(f"SLEEP for {to_sleep:.3f}s (next_ts={self._next_ts:.3f})")
+                self._cv.wait(timeout=to_sleep)
+
+OVERPASS_MIN_INTERVAL = config.overpass_min_interval
+OVERPASS_RL = RateLimiter(OVERPASS_MIN_INTERVAL)
+
+
+def _overpass_http(
+    method: Literal["GET", "POST"], url: str, *, params=None, data=None, timeout=None
+) -> requests.Response:
+    OVERPASS_RL.wait()
+    if method == "GET":
+        return requests.get(url, params=params, timeout=timeout or config.timeout)
+    return requests.post(url, data=data, timeout=timeout or config.timeout)
 
 
 class RequestError(RuntimeError):
@@ -39,21 +79,9 @@ def _get_overpass_pause(
     base_endpoint: str,
     recursion_pause: float = 5,
 ) -> float:
-    """
-    Retrieve a pause duration from the Overpass API status endpoint.
-
-    Parameters:
-        base_endpoint (str):
-            Base Overpass API URL (without "/status" at the end).
-        recursion_pause (float):
-            How long to wait between recursive calls if the server is currently running a query.
-    Returns:
-        (float):
-            Pause duration in seconds.
-    """
     url = base_endpoint[: -len("/interpreter")] + "/status"
     try:
-        response = requests.get(url, timeout=config.timeout)
+        response = _overpass_http("GET", url, timeout=config.timeout)
         response_text = response.text
     except requests.RequestException as e:
         raise RequestError(f"Unable to reach {url}, {e}") from e
@@ -77,13 +105,9 @@ def _get_overpass_pause(
             pause = max(seconds, 1)
         elif status_first_part == "Currently":
             time.sleep(recursion_pause)
-            pause = _get_overpass_pause(
-                base_endpoint,
-                recursion_pause=recursion_pause,
-            )
+            pause = _get_overpass_pause(base_endpoint, recursion_pause=recursion_pause)
         else:
             raise RequestError(f"Unrecognized server status: {status!r}")
-
     return pause
 
 
@@ -93,30 +117,77 @@ def _overpass_request(
     params: dict | None = None,
     data: dict | None = None,
     timeout: float | None = None,
+    *,
+    max_retries: int = 4,
+    backoff_base: float = 1.8,
 ) -> requests.Response:
-    """Single Overpass request with status-aware pausing (no retries)."""
-    pause = _get_overpass_pause(overpass_url)
-    if pause > 0:
-        logger.warning(f"Waiting {pause} seconds for available Overpass API slot")
-        time.sleep(pause)
-    # Sleep anyway to not get 429 to many requests
-    time.sleep(0.5)
-    try:
-        if method == "GET":
-            resp = requests.get(overpass_url, params=params, timeout=timeout or config.timeout)
-        else:
-            resp = requests.post(overpass_url, data=data, timeout=timeout or config.timeout)
-    except requests.RequestException as e:
-        raise RequestError(f"Request error: {e}") from e
 
-    if resp.status_code == 200:
-        return resp
+    last_err_text = None
+    for attempt in range(max_retries + 1):
+        try:
+            pause = _get_overpass_pause(overpass_url)
+        except RequestError as e:
+            pause = 0
+            logger.debug(f"Overpass /status check failed: {e}")
+
+        if pause > 0:
+            logger.warning(f"Waiting {pause} seconds for available Overpass API slot")
+            time.sleep(pause)
+
+        try:
+            resp = _overpass_http(method, overpass_url, params=params, data=data, timeout=timeout or config.timeout)
+        except requests.RequestException as e:
+            last_err_text = str(e)
+            if attempt < max_retries:
+                sleep_s = min(60, backoff_base**attempt)
+                logger.warning(f"Network error, retrying in {sleep_s} (attempt {attempt + 1}/{max_retries})")
+                time.sleep(sleep_s)
+                continue
+            raise RequestError(f"Request error: {e}") from e
+
+        if resp.status_code == 200:
+            return resp
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait_s = int(retry_after)
+                except ValueError:
+                    try:
+                        ra_dt = parsedate_to_datetime(retry_after)
+                        wait_s = max(1, int((ra_dt - dt.datetime.now(tz=ra_dt.tzinfo)).total_seconds()))
+                    except Exception:
+                        wait_s = 5
+                wait_s = max(wait_s, 1)
+                logger.warning(f"HTTP 429: honoring Retry-After={wait_s}")
+                time.sleep(wait_s)
+            else:
+                try:
+                    pause = _get_overpass_pause(overpass_url)
+                except RequestError:
+                    pause = 0
+                wait_s = max(1, pause or int(backoff_base**attempt))
+                logger.warning(f"HTTP 429: waiting {wait_s} seconds before retry")
+                time.sleep(wait_s)
+
+            if attempt < max_retries:
+                continue
+
+        if resp.status_code in (502, 503, 504):
+            if attempt < max_retries:
+                wait_s = min(60, backoff_base**attempt)
+                logger.warning(f"HTTP {resp.status_code}: retrying in {wait_s}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait_s)
+                continue
+        last_err_text = resp.text
+        break
 
     raise RequestError(
         message=f"Request failed with status code {resp.status_code}, reason: {resp.reason}",
         status_code=resp.status_code,
         reason=resp.reason,
-        response_text=resp.text,
+        response_text=last_err_text,
         response_content=resp.content,
     )
 
@@ -259,3 +330,51 @@ def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
 
     json_result = resp.json()["elements"]
     return pd.DataFrame(json_result)
+
+def fetch_member_tags(members_missing, chunk_size=2000):
+    """
+    members_missing: iterable of dicts  {'type': 'node|way|relation', 'ref': int}
+    :returns {("node", 123): {tags...}, ("way", 456): {tags...}, ...}
+    """
+    ids = defaultdict(list)
+    for m in members_missing:
+        t = m["type"]
+        ids[t].append(int(m["ref"]))
+
+    for k in list(ids.keys()):
+        ids[k] = sorted(set(ids[k]))
+
+    result = {}
+
+    def _build_query(sub_ids: dict) -> str:
+        parts = []
+        if sub_ids.get("node"):
+            parts.append(f'node(id:{",".join(map(str, sub_ids["node"]))});')
+        if sub_ids.get("way"):
+            parts.append(f'way(id:{",".join(map(str, sub_ids["way"]))});')
+        if sub_ids.get("relation"):
+            parts.append(f'rel(id:{",".join(map(str, sub_ids["relation"]))});')
+        body = "\n".join(parts)
+        return f"[out:json][timeout:{config.timeout}];\n(\n{body}\n);\nout tags center qt;"
+
+    def _yield_chunks(type_key):
+        arr = ids.get(type_key, [])
+        for i in range(0, len(arr), chunk_size):
+            yield {type_key: arr[i:i+chunk_size]}
+
+    chunks = []
+    for tk in ("node", "way", "relation"):
+        chunks.extend(_yield_chunks(tk))
+
+    for sub in chunks:
+        q = _build_query(sub)
+        resp = _overpass_request(method="POST", overpass_url=config.overpass_url, data={"data": q})
+        els = resp.json().get("elements", [])
+        for e in els:
+            key = (e["type"], int(e["id"]))
+            result[key] = e.get("tags", {}) or {}
+            if e["type"] != "node":
+                if "center" in e:
+                    result[key]["__center__"] = (e["center"]["lon"], e["center"]["lat"])
+
+    return result

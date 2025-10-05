@@ -1,9 +1,10 @@
-import multiprocessing
+import time
 
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
-from shapely import MultiPolygon, Polygon
+import numpy as np
+from shapely import MultiPolygon, Polygon, LineString
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map, thread_map
 
@@ -21,97 +22,173 @@ logger = config.logger
 
 
 def _graph_data_to_nx(graph_df, keep_geometry: bool = True, additional_data=None) -> nx.DiGraph:
+    def avg_point(points):
+        arr = np.asarray([p for p in points if p is not None], dtype=float)
+        return tuple(arr.mean(axis=0)) if len(arr) else None
+
+    def merge_dicts_last(dicts):
+        out = {}
+        for d in dicts.dropna():
+            for k, v in d.items():
+                out[k] = v
+        return out
 
     nodes_col = ["node_id", "point", "route", "type", "ref_id", "extra_data"]
-    edges_col = ["u", "v","type","extra_data", "geometry"]
+    edges_col = ["u", "v", "type", "extra_data", "route", "geometry"]
     graph_nodes = graph_df[~graph_df["node_id"].isna()][nodes_col].copy()
     graph_edges = graph_df[graph_df["node_id"].isna()][edges_col].copy()
+
     if additional_data is not None:
-        edges_to_add, nodes_to_add = additional_data
-        graph_nodes_combined = graph_nodes.merge(nodes_to_add, left_on="ref_id", right_on="ref_id", how="outer")
+        additional_edges, additional_nodes = additional_data
+        graph_nodes_combined = graph_nodes.merge(additional_nodes, left_on="ref_id", right_on="ref_id", how="outer")
         for column in nodes_col:
             if column in graph_nodes_combined.columns:
                 continue
             else:
-                graph_nodes_combined[column] = graph_nodes_combined[f"{column}_x"].combine_first(
-                    graph_nodes_combined[f"{column}_y"]
+                graph_nodes_combined[column] = graph_nodes_combined[f"{column}_y"].combine_first(
+                    graph_nodes_combined[f"{column}_x"]
                 )
         graph_nodes_combined = graph_nodes_combined[nodes_col]
 
-        no_point_refs = graph_nodes_combined[(graph_nodes_combined['point'].isna())&(~graph_nodes_combined['ref_id'].isna())][['ref_id']].copy()
-        no_point_refs = no_point_refs.merge(edges_to_add[["v_ref",'u_ref']], left_on="ref_id", right_on="v_ref")
+        no_point_refs = graph_nodes_combined[
+            (graph_nodes_combined["point"].isna()) & (~graph_nodes_combined["ref_id"].isna())
+        ][["ref_id"]].copy()
+        if len(no_point_refs) > 0:
+            no_point_refs = no_point_refs.merge(
+                additional_edges[["v_ref", "u_ref"]], left_on="ref_id", right_on="v_ref"
+            )[["v_ref", "u_ref"]].drop_duplicates(subset="u_ref")
+            no_point_refs = no_point_refs.merge(
+                graph_nodes[["node_id", "type", "ref_id"]], left_on="u_ref", right_on="ref_id"
+            ).drop(columns=["ref_id"])
+            no_point_refs = no_point_refs.merge(
+                graph_edges[["u", "v"]], left_on="node_id", right_on="u", how="left"
+            ).drop(columns=["u"])
+            no_point_refs = no_point_refs.merge(
+                graph_nodes[["node_id", "type", "ref_id"]].add_prefix("potential_"),
+                left_on="v",
+                right_on="potential_node_id",
+            )
+            no_point_refs = no_point_refs[no_point_refs["potential_type"] == "platform"]
+            remap_refs = no_point_refs.set_index("potential_ref_id")["v_ref"].to_dict()
+            s = graph_nodes_combined["ref_id"].copy()
+            mapped = s.map(remap_refs)
+            mask = mapped.notna()
+            graph_nodes_combined.loc[mask, "ref_id"] = mapped[mask]
+            graph_nodes_combined.loc[mask, "type"] = "subway_platform"
 
-        gnm = graph_nodes.drop_duplicates("ref_id").dropna(subset="ref_id")
-        refid2nodeid = gnm.set_index("ref_id")["node_id"]
+            graph_nodes = graph_nodes_combined.dropna(subset=["node_id", "point"], how="all").copy()
+            graph_nodes["route"] = graph_nodes["route"].fillna("subway_transit")
+            # TODO delete duplicated platform node
 
-        nodeid2refid = gnm[gnm['type']=='subway_platform'].set_index("node_id")["ref_id"]
-
-
-        no_point_refs["u_node_id"] = no_point_refs["u_ref"].map(refid2nodeid)
-        no_point_refs = no_point_refs.dropna(subset='u_node_id').merge(graph_edges[['u','v']], left_on="u_node_id", right_on="u", how="left").drop(columns=["u"])
-        no_point_refs['potential'] = no_point_refs["v"].map(nodeid2refid) # v_ref -> from... замену надо сделать #TODO
-
-    platforms = graph_df[graph_df["type"] == "platform"].copy()
-    platforms["point_group"] = platforms["point"].apply(lambda x: (round(x[0]), round(x[1])))
+    platforms = graph_nodes[graph_nodes["type"] == "platform"].copy()
+    platforms["point_group"] = platforms["point"].apply(lambda p: (round(p[0]), round(p[1])))
     platforms = platforms.groupby("point_group", as_index=False).agg(
-        {"point": "first", "node_id": list, "route": list, "ref_id": "first"}
+        point=("point", "first"),
+        node_id=("node_id", lambda s: tuple(s.dropna())),
+        route=("route", lambda s: tuple(s)),
+        ref_id=("ref_id", lambda s: tuple(s.dropna())),
+        extra_data=("extra_data", merge_dicts_last),
     )
     platforms["type"] = "platform"
 
-    stops = graph_df[(graph_df["type"] != "platform") & (graph_df["u"].isna())][
-        ["point", "node_id", "route", "type", "ref_id"]
-    ]
-    stops["point_group"] = stops["point"].apply(lambda x: (round(x[0]), round(x[1])))
-    stops = stops.groupby(["point_group", "route", "type"], as_index=False).agg(
-        {"point": "first", "node_id": list, "ref_id": "first"}
+    not_platforms = graph_nodes[graph_nodes["type"] != "platform"].copy()
+    not_platforms["point_group"] = not_platforms["point"].apply(lambda p: (round(p[0]), round(p[1])))
+    not_platforms = not_platforms.groupby(["point_group", "route", "type"], as_index=False).agg(
+        point=("point", "first"),
+        node_id=("node_id", lambda s: tuple(s.dropna())),
+        ref_id=("ref_id", lambda s: tuple(set(s.dropna()))),
+        extra_data=("extra_data", merge_dicts_last),
     )
-    stops["route"] = stops["route"].apply(lambda x: [x])
+    not_platforms = not_platforms.groupby(["ref_id", "route", "type"], as_index=False).agg(
+        point=("point", avg_point),
+        node_id=("node_id", "sum"),
+        extra_data=("extra_data", merge_dicts_last),
+    )
 
-    all_nodes = pd.concat([platforms, stops], ignore_index=True).drop(columns="point_group").reset_index(drop=True)
-    mapping = {}
-    for i, row in all_nodes.iterrows():
-        index = row.name
-        node_id_list = row["node_id"]
-        for node_id in node_id_list:
-            mapping[node_id] = int(index)
+    all_nodes = pd.concat([platforms, not_platforms], ignore_index=True)
 
-    def replace_with_mapping(value):
-        return mapping.get(value)
+    map_nodeid_to_idx = {}
+    map_refid_to_idx = {}
 
-    # Применение функции замены к каждому столбцу DataFrame
-    graph_df["u"] = graph_df["u"].apply(replace_with_mapping)
-    graph_df["v"] = graph_df["v"].apply(replace_with_mapping)
-    graph_df["node_id"] = graph_df["node_id"].apply(replace_with_mapping)
+    for idx, row in all_nodes.iterrows():
+        for nid in row["node_id"] or []:
+            map_nodeid_to_idx[nid] = idx
+        rids = row["ref_id"]
+        if not isinstance(rids, (list, tuple)):
+            rids = [rids]
+        for rid in rids or []:
+            map_refid_to_idx[rid] = idx
 
-    edges = graph_df[~graph_df["u"].isna()][["route", "type", "u", "v", "geometry", "extra_data"]].copy()
+    edges_existing = graph_edges[["route", "type", "u", "v", "geometry", "extra_data"]].copy()
+    edges_existing["u"] = edges_existing["u"].map(map_nodeid_to_idx)
+    edges_existing["v"] = edges_existing["v"].map(map_nodeid_to_idx)
+    edges_existing = edges_existing.dropna(subset=["u", "v"]).copy()
+
+    if additional_data is not None:
+        additional_edges["u"] = additional_edges["u_ref"].map(map_refid_to_idx)
+        additional_edges["v"] = additional_edges["v_ref"].map(map_refid_to_idx)
+        additional_edges = additional_edges.dropna(subset=["u", "v"]).copy()
+
+        def _ensure_geom(row):
+            if row.get("geometry") is not None:
+                return row["geometry"]
+            pu = all_nodes.loc[int(row["u"]), "point"]
+            pv = all_nodes.loc[int(row["v"]), "point"]
+            return LineString([pu, pv])
+
+        additional_edges["geometry"] = additional_edges.apply(_ensure_geom, axis=1)
+    else:
+        additional_edges = pd.DataFrame()
+
+    edges = pd.concat([edges_existing, additional_edges], ignore_index=True)
+
+    if "length_meter" not in edges.columns:
+        edges["length_meter"] = np.nan
+    if "time_min" not in edges.columns:
+        edges["time_min"] = np.nan
 
     def calc_len_time(row):
         if row.type == "boarding":
-            return 0, 0
-        length = round(row.geometry.length, 3)
-        return length, round(length / PublicTrasport[row.type.upper()].avg_speed, 3)
+            return 0.0, 0.0
+        geom = row.geometry
+        if geom is None:
+            return 0.0, 0.0
+        length = float(round(geom.length, 3))
+        speed = PublicTrasport[row.type.upper()].avg_speed
+        return length, float(round(length / speed, 3))
 
-    edges[["length_meter", "time_min"]] = edges.apply(
-        calc_len_time,
-        axis=1,
-        result_type="expand",
-    )
+    mask_missing = edges["length_meter"].isna() | edges["time_min"].isna()
+
+    vals = edges.loc[mask_missing].apply(calc_len_time, axis=1, result_type="expand")
+    vals.columns = ["length_meter", "time_min"]
+    edges.loc[mask_missing, ["length_meter", "time_min"]] = vals
+
     graph = nx.DiGraph()
-    for i, node in all_nodes.iterrows():
-        route = list(set(node["route"]))
+
+    for idx, node in all_nodes.iterrows():
+        route = list(set(node["route"])) if isinstance(node["route"], tuple) else [node["route"]]
         if len(route) == 1:
             route = route[0]
-        graph.add_node(i, x=node["point"][0], y=node["point"][1], type=node["type"], route=route, ref_id=node["ref_id"])
-    for i, edge in edges.iterrows():
+        graph.add_node(
+            idx,
+            x=float(node["point"][0]),
+            y=float(node["point"][1]),
+            type=node["type"],
+            route=route,
+            ref_id=(node["ref_id"][0] if isinstance(node["ref_id"], tuple) and node["ref_id"] else node["ref_id"]),
+            **(node["extra_data"] if isinstance(node["extra_data"], dict) else {}),
+        )
+
+    for _, e in edges.iterrows():
         graph.add_edge(
-            edge["u"],
-            edge["v"],
-            route=edge["route"],
-            type=edge["type"],
-            geometry=edge["geometry"] if keep_geometry else None,
-            length_meter=edge["length_meter"],
-            time_min=edge["time_min"],
-            **edge["extra_data"],
+            int(e["u"]),
+            int(e["v"]),
+            route=e["route"],
+            type=e["type"],
+            geometry=(e["geometry"] if keep_geometry else None),
+            length_meter=e["length_meter"],
+            time_min=e["time_min"],
+            **(e["extra_data"] if isinstance(e["extra_data"], dict) else {}),
         )
 
     return graph
@@ -169,6 +246,8 @@ def _get_public_transport_graph(
 
     # Отделяем станции от маршрутов при необходимости
     if platform_stop_data_use:
+        for column in ["is_stop_area", "is_stop_area_group", "is_station"]:
+            overpass_data[column] = overpass_data[column].astype("boolean").fillna(False)
         routes_data = overpass_data[
             ~((overpass_data["is_stop_area"]) | (overpass_data["is_stop_area_group"]) | (overpass_data["is_station"]))
         ].copy()

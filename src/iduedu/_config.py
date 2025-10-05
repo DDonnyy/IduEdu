@@ -22,12 +22,13 @@ class Config:
 
     def __init__(self):
         self.overpass_url = "http://lz4.overpass-api.de/api/interpreter"
-        self.timeout = 600
+        self.timeout = 120
         self.enable_tqdm_bar = True
         self.logger = logger
         self.drive_useful_edges_attr = {"highway", "name", "lanes"}
         self.walk_useful_edges_attr = {"highway", "name"}
         self.transport_useful_edges_attr = {"name"}
+        self.overpass_min_interval = 1
 
     def set_logger_lvl(self, lvl: Literal["TRACE", "DEBUG", "INFO", "WARN", "ERROR"]):
         self.logger.remove()

@@ -167,6 +167,7 @@ def get_drive_graph(
 
     edges["length_meter"] = edges.geometry.length.round(3)
     edges["time_min"] = (edges["length_meter"] / edges["speed_mpm"]).round(3)
+    edges["type"] = "drive"
 
     graph = nx.MultiDiGraph()
 
@@ -176,7 +177,7 @@ def get_drive_graph(
         needed_tags |= {"category"}
     if keep_edge_geometry:
         needed_tags |= {"geometry"}
-    needed_tags |= {"length_meter", "time_min"}
+    needed_tags |= {"length_meter", "time_min", "type"}
     edge_attr_cols = list(needed_tags)
     attrs_iter = edges[edge_attr_cols].to_dict("records")
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
@@ -237,7 +238,6 @@ def get_walk_graph(
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
         edges = edges.clip(clip_poly_gdf, keep_geom_type=True)
 
-
     two_way = edges.copy()
     two_way.geometry = two_way.geometry.reverse()
     edges = pd.concat([edges, two_way], ignore_index=True)
@@ -261,6 +261,7 @@ def get_walk_graph(
 
     edges["length_meter"] = edges.geometry.length.round(3)
     edges["time_min"] = (edges["length_meter"] / float(walk_speed)).round(3)
+    edges["type"] = "walk"
 
     # Сборка графа
     graph = nx.MultiDiGraph()
@@ -269,7 +270,7 @@ def get_walk_graph(
     edge_attrs = set(needed_tags)
     if keep_edge_geometry:
         edge_attrs |= {"geometry"}
-    edge_attrs |= {"length_meter", "time_min"}
+    edge_attrs |= {"length_meter", "time_min", "type"}
 
     attrs_iter = edges[list(edge_attrs)].to_dict("records")
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))

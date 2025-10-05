@@ -19,15 +19,27 @@ def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
     return clipped
 
 
-def keep_largest_strongly_connected_component(graph: nx.DiGraph) -> nx.DiGraph:
+def _fmt_top_sizes(sizes, top_k: int = 5) -> str:
+    ss = sorted(sizes, reverse=True)
+    if len(ss) <= top_k:
+        return "[" + ", ".join(map(str, ss)) + "]"
+    return "[" + ", ".join(map(str, ss[:top_k])) + ", …]"
+
+
+def keep_largest_strongly_connected_component(
+    graph: nx.DiGraph,
+    *,
+    top_k_wcc_sizes: int = 5,
+) -> nx.DiGraph:
     graph = graph.copy()
 
     weakly_connected_components = list(nx.weakly_connected_components(graph))
     if len(weakly_connected_components) > 1:
+        sizes = [len(c) for c in weakly_connected_components]
         logger.warning(
             f"Graph contains {len(weakly_connected_components)} weakly connected components. "
             f"This means the graph has disconnected groups if edge directions are ignored. "
-            f"Component sizes:: {[len(c) for c in weakly_connected_components]}"
+            f"Component sizes:: {_fmt_top_sizes(sizes, top_k=top_k_wcc_sizes)}"
         )
 
     all_scc = sorted(nx.strongly_connected_components(graph), key=len)

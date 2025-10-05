@@ -15,6 +15,8 @@ from itertools import chain
 from shapely import LineString
 from itertools import combinations
 
+from iduedu.modules.overpass_downloaders import fetch_member_tags
+
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
 THRESHOLD_METERS = 100
@@ -104,9 +106,6 @@ def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -
 
     def process_roles(route, roles):
         filtered = route[route["role"].isin(roles)]
-        if len(filtered) == 0:
-            return None
-
         return filtered.apply(transform_geometry, axis=1).tolist(), filtered["ref"].tolist()
 
     def extract_needed(loc_obj: dict, keys: list[str]) -> dict | None:
@@ -297,20 +296,25 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     pairs = {}  # p_idx -> s_idx
 
     if platform_len and stops_len:
-        stop_tree = cKDTree(stops)
-        dists, idxs = stop_tree.query(platforms, k=2)  # Смотрим 2 ближайших соседа
 
-        if stops_len == 1:
-            dists = np.array(dists).reshape(platform_len, 1)
-            idxs = np.array(idxs, dtype=int).reshape(platform_len, 1)
+        stop_tree = cKDTree(stops)
+        k = min(2, stops_len)
+        dists, idxs = stop_tree.query(platforms, k=k)
+
+        dists = np.asarray(dists)
+        idxs = np.asarray(idxs)
+        if dists.ndim == 1:  # это случается, когда k == 1
+            dists = dists[:, None]
+            idxs = idxs[:, None]
 
         candidates = []
         for p_i in range(platform_len):
-            for rank in range(2):
-                dist = float(dists[p_i][rank])
-                s_i = int(idxs[p_i][rank])
-                if dist <= THRESHOLD_METERS:
-                    candidates.append((dist, p_i, s_i))
+            for rank in range(dists.shape[1]):
+                dist = float(dists[p_i, rank])
+                if not np.isfinite(dist) or dist > THRESHOLD_METERS:
+                    continue
+                s_i = int(idxs[p_i, rank])
+                candidates.append((dist, p_i, s_i))
 
         candidates.sort(key=lambda t: t[0])
         for dist, p_i, s_i in candidates:
@@ -367,7 +371,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
     last_dist = None
     last_projected_stop_id = None
 
-    def add_node(desc, x, y, transport=None, ref_id=None):
+    def add_node(x, y, node_type=None, ref_id=None):
         x = round(x, 5)
         y = round(y, 5)
         graph_data.append(
@@ -375,7 +379,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
                 "node_id": (loc_id, node_id),
                 "point": (x, y),
                 "route": name,
-                "type": (transport_type if transport else desc),
+                "type": (node_type if node_type else transport_type),
                 "ref_id": ref_id,
             }
         )
@@ -393,13 +397,6 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
             payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
         graph_data.append(payload)
 
-    if transport_type == "subway":
-        stop_str = "subway_stop"
-        platform_str = "subway_platform"
-    else:
-        stop_str = "stop"
-        platform_str = "platform"
-
     for item in items:
         p_xy = item["p"]
         p_ref = item.get("pref")
@@ -415,7 +412,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         stop_dist = path.project(stop)
 
         projected_stop = path.interpolate(stop_dist)
-        add_node(stop_str, projected_stop.x, projected_stop.y, transport=True, ref_id=s_ref)
+        add_node(projected_stop.x, projected_stop.y, ref_id=s_ref)
 
         if last_dist is not None:
             seg = substring(path, last_dist, stop_dist)
@@ -427,7 +424,7 @@ def geometry_to_graph_edge_node_df(loc: pd.Series, transport_type, loc_id) -> Da
         last_dist = stop_dist
         node_id += 1
 
-        add_node(platform_str, platform.x, platform.y, ref_id=p_ref)
+        add_node(platform.x, platform.y, node_type="platform", ref_id=p_ref)
         boarding_geom = LineString(
             [(round(projected_stop.x, 5), round(projected_stop.y, 5)), (round(platform.x, 5), round(platform.y, 5))]
         )
@@ -445,6 +442,72 @@ def parse_overpass_to_edgenode(loc, crs, needed_tags) -> pd.DataFrame | None:
     parsed_geometry = parse_overpass_route_response(loc, crs, needed_tags)
     edgenode = geometry_to_graph_edge_node_df(parsed_geometry, transport_type, loc_id)
     return edgenode
+
+
+def infer_role_from_tags(tags: dict) -> str:
+    _TRUE = {"yes", "true", "1"}
+
+    def _is_true(v):
+        return str(v).lower() in _TRUE
+
+    if not tags:
+        return ""
+
+    pt = (tags.get("public_transport", "")).lower()
+    rail = (tags.get("railway", "")).lower()
+    stat = (tags.get("station", "")).lower()
+    entr = (tags.get("entrance", "")).lower()
+    entry = (tags.get("entry", "")).lower()
+    exit_ = (tags.get("exit", "")).lower()
+
+    # station
+    if pt == "station" or rail == "station" or stat == "subway":
+        return "station"
+
+    # platform
+    if pt == "platform" or rail == "platform":
+        return "platform"
+
+    # stop / stop_position
+    if pt in {"stop_position", "stop"} or rail in {"stop", "halt"}:
+        return "stop"
+
+    # entrances
+    if rail == "subway_entrance" or entr in {"yes", "main", "service", "entrance", "entry", "exit"}:
+        if entr == "entry" or (_is_true(entry) and not _is_true(exit_)):
+            return "entry_only"
+        if entr == "exit" or (_is_true(exit_) and not _is_true(entry)):
+            return "exit_only"
+        return "entrance"
+    return ""
+
+
+def patch_members_roles_inplace(stop_areas_df):
+
+    missing = []
+    for _, r in stop_areas_df.iterrows():
+        for m in r.get("members") or []:
+            role = (m.get("role") or "").strip()
+            if role == "":
+                missing.append({"type": m["type"], "ref": int(m["ref"])})
+
+    if not missing:
+        return
+
+    tags_map = fetch_member_tags(missing)
+
+    for _, r in stop_areas_df.iterrows():
+        for m in r.get("members") or []:
+            if (m.get("role") or "").strip():
+                continue
+            key = (m["type"], int(m["ref"]))
+            tags = tags_map.get(key, {})
+            role = infer_role_from_tags(tags)
+            if role:
+                m["role"] = role
+            if "lon" not in m and "__center__" in tags:
+                cx, cy = tags["__center__"]
+                m["lon"], m["lat"] = cx, cy
 
 
 def parse_overpass_subway_data(
@@ -473,20 +536,17 @@ def parse_overpass_subway_data(
     }
 
     def _collect_by_roles(members, parent_id):
-        """Собирает членов по ролям с учётом распространённых синонимов."""
         roles = defaultdict(list)
         for m in members or []:
             role = (m.get("role") or "").lower()
             roles[role].append(m)
 
-        # базовые наборы
         stations = roles.get("station", [])
         for s in stations:
             station_parent_ref[parent_id] = s["ref"]
         stops = roles.get("stop", [])
         platforms = roles.get("platform", [])
 
-        # входы/выходы и варианты подписей
         entrances = (
             roles.get("entrance", [])
             + roles.get("subway_entrance", [])
@@ -522,10 +582,13 @@ def parse_overpass_subway_data(
             }
         )
 
+    patch_members_roles_inplace(stop_areas)
+
     for _, stop_area in stop_areas.iterrows():
 
         members = stop_area["members"]
         all_nodes = _collect_by_roles(members, stop_area["id"])
+        start_idx = len(graph_nodes)
 
         for node in chain.from_iterable(all_nodes):
             if "geometry" in node:
@@ -536,6 +599,8 @@ def parse_overpass_subway_data(
 
             add_node(node["ref"], node["lon"], node["lat"], node["role"])
 
+        ref2idx = {graph_nodes[i]["ref_id"]: i for i in range(start_idx, len(graph_nodes))}
+
         stations, stops, platforms, entrances, entry_only, exit_only = all_nodes
 
         for stop in stops:
@@ -543,23 +608,37 @@ def parse_overpass_subway_data(
                 add_edge(stop["ref"], platform["ref"], "boarding")
                 add_edge(platform["ref"], stop["ref"], "boarding")
 
-        for platform in platforms:
-            for station in stations:
-                add_edge(station["ref"], platform["ref"], "subway_station")
-                add_edge(platform["ref"], station["ref"], "subway_station")
+        has_station = len(stations) > 0
+
+        if has_station:
+            for platform in platforms:
+                for station in stations:
+                    add_edge(station["ref"], platform["ref"], "subway_station")
+                    add_edge(platform["ref"], station["ref"], "subway_station")
+
+        targets = [s["ref"] for s in stations] if has_station else [p["ref"] for p in platforms]
+
+        has_entrance = (len(entrances) + len(entry_only)) > 0
+        has_exit = (len(entrances) + len(exit_only)) > 0
 
         for entrance in entrances:
-            for station in stations:
-                add_edge(entrance["ref"], station["ref"], "subway_entrance")
-                add_edge(station["ref"], entrance["ref"], "subway_exit")
+            for t in targets:
+                add_edge(entrance["ref"], t, "subway_entrance")
+                add_edge(t, entrance["ref"], "subway_exit")
 
         for entrance in entry_only:
-            for station in stations:
-                add_edge(entrance["ref"], station["ref"], "subway_entrance")
+            for t in targets:
+                add_edge(entrance["ref"], t, "subway_entrance")
 
         for entrance in exit_only:
-            for station in stations:
-                add_edge(station["ref"], entrance["ref"], "subway_exit")
+            for t in targets:
+                add_edge(t, entrance["ref"], "subway_exit")
+
+        if not (has_entrance and has_exit):
+            for t in targets:
+                idx = ref2idx.get(int(t))
+                if idx is not None:
+                    graph_nodes[idx]["type"] = "platform"
 
     for _, stop_area_group in stop_areas_group.iterrows():
         members = stop_area_group["members"]
@@ -568,11 +647,14 @@ def parse_overpass_subway_data(
 
         pairs = list(combinations(connect_refs, 2))
         for pair in pairs:
-            add_edge(pair[0], pair[1], "subway_transfer")
-            add_edge(pair[1], pair[0], "subway_transfer")
+            if pair[0] != pair[1]:
+                add_edge(pair[0], pair[1], "subway_transfer")
+                add_edge(pair[1], pair[0], "subway_transfer")
+
     edges_gdf = pd.DataFrame(graph_edges)
     nodes_gdf = pd.DataFrame(graph_nodes)
-    nodes_gdf['extra_data'] = {}
+    nodes_gdf["extra_data"] = {}
+
     for _, station_data in stations_data.iterrows():
         tags = station_data["tags"]
         ref_id = station_data["id"]
@@ -580,4 +662,80 @@ def parse_overpass_subway_data(
         extra_data = {k: v for k, v in tags.items() if k in ["name", "depth"]}
         extra_data["depth"] = extra_data.get("depth", 0)
         nodes_gdf.loc[station_ind, "extra_data"] = [extra_data for _ in station_ind]
+
+    edges_gdf = edges_gdf.drop_duplicates(subset=["u_ref", "v_ref"])
+    edges_gdf["length_meter"] = 0.0
+    edges_gdf["time_min"] = 0.0
+    edges_gdf["geometry"] = None
+
+    def _depth_from_extra(d):
+        if isinstance(d, dict):
+            v = d.get("depth", 0)
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return 0.0
+        return 0.0
+
+    nodes_info = nodes_gdf[["ref_id", "point", "type", "extra_data"]].copy()
+    nodes_info["depth_m"] = nodes_info["extra_data"].apply(_depth_from_extra)
+
+    nodes_lut = nodes_info.set_index("ref_id")[["point", "type", "depth_m"]]
+
+    edges_nodes = (
+        edges_gdf.join(nodes_lut.add_prefix("u_"), on="u_ref")
+        .join(nodes_lut.add_prefix("v_"), on="v_ref")
+        .drop_duplicates(subset=["u_ref", "v_ref"])
+    )
+
+    def _horiz_len(pu, pv):
+        if pu is None or pv is None:
+            return np.nan
+        try:
+            return LineString([pu, pv]).length
+        except Exception:
+            return np.nan
+
+    edges_nodes["horiz_m"] = edges_nodes.apply(lambda r: _horiz_len(r["u_point"], r["v_point"]), axis=1)
+
+    edges_nodes["station_depth_m"] = np.where(
+        edges_nodes["u_type"].eq("subway_station"),
+        edges_nodes["u_depth_m"].fillna(0.0),
+        np.where(edges_nodes["v_type"].eq("subway_station"), edges_nodes["v_depth_m"].fillna(0.0), 0.0),
+    ).astype(float)
+
+    ESCALATOR_SPEED_MPMIN = 0.75 * 60
+    WALK_SPEED_MPMIN = 5 * 1000 / 60
+    TRANSFER_PATH_FACTOR = 1.5
+
+    mask_escal = edges_nodes["type"].isin(["subway_entrance", "subway_exit"]) & edges_nodes["horiz_m"].notna()
+    edges_nodes.loc[mask_escal, "length_meter"] = np.hypot(
+        edges_nodes.loc[mask_escal, "horiz_m"], edges_nodes.loc[mask_escal, "station_depth_m"]
+    )
+    edges_nodes.loc[mask_escal, "time_min"] = edges_nodes.loc[mask_escal, "length_meter"] / ESCALATOR_SPEED_MPMIN
+
+    def _straight_geom(pu, pv):
+        if pu is None or pv is None:
+            return None
+        try:
+            return LineString([pu, pv])
+        except Exception:
+            return None
+
+    edges_nodes.loc[mask_escal, "geometry"] = edges_nodes.loc[mask_escal].apply(
+        lambda r: _straight_geom(r["u_point"], r["v_point"]), axis=1
+    )
+
+    mask_transfer = edges_nodes["type"].eq("subway_transfer") & edges_nodes["horiz_m"].notna()
+    edges_nodes.loc[mask_transfer, "length_meter"] = TRANSFER_PATH_FACTOR * edges_nodes.loc[
+        mask_transfer, "horiz_m"
+    ].round(1)
+    edges_nodes.loc[mask_transfer, "time_min"] = (
+        edges_nodes.loc[mask_transfer, "length_meter"] / WALK_SPEED_MPMIN
+    ).round(1)
+    edges_nodes.loc[mask_transfer, "geometry"] = edges_nodes.loc[mask_transfer].apply(
+        lambda r: _straight_geom(r["u_point"], r["v_point"]), axis=1
+    )
+
+    edges_gdf[["length_meter", "time_min", "geometry"]] = edges_nodes[["length_meter", "time_min", "geometry"]]
     return edges_gdf, nodes_gdf
