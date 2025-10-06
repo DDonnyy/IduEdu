@@ -4,8 +4,8 @@ import time
 from collections import defaultdict
 from typing import Literal
 
-import pandas as pd
 import geopandas as gpd
+import pandas as pd
 import requests
 from shapely import LineString, MultiPolygon, Polygon, unary_union
 from shapely.ops import polygonize
@@ -15,8 +15,8 @@ from iduedu import config
 logger = config.logger
 
 import threading
-from time import monotonic
 from email.utils import parsedate_to_datetime
+from time import monotonic
 
 
 class RateLimiter:
@@ -40,6 +40,7 @@ class RateLimiter:
                 to_sleep = self._next_ts - now
                 # logger.info(f"SLEEP for {to_sleep:.3f}s (next_ts={self._next_ts:.3f})")
                 self._cv.wait(timeout=to_sleep)
+
 
 OVERPASS_MIN_INTERVAL = config.overpass_min_interval
 OVERPASS_RL = RateLimiter(OVERPASS_MIN_INTERVAL)
@@ -228,9 +229,37 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
 
 
 def get_4326_boundary(
-    osm_id: int | None = None, territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None
+    *, osm_id: int | None = None, territory: Polygon | MultiPolygon | gpd.GeoDataFrame | None = None
 ) -> Polygon:
+    """
+    Normalize a territory boundary to a single EPSG:4326 Polygon.
 
+    Accepts either an `osm_id` (relation id) to fetch the boundary from OSM, a direct
+    `Polygon`/`MultiPolygon`, or a `GeoDataFrame`. Returns a single `Polygon` in lon/lat.
+    For `MultiPolygon`, the function returns its **convex hull** as a Polygon.
+
+    Parameters:
+        osm_id (int | None): OSM relation id. If provided, boundary is fetched via Overpass.
+        territory (Polygon | MultiPolygon | gpd.GeoDataFrame | None): Existing boundary geometry
+            or a GeoDataFrame containing it. If GeoDataFrame is given, it is reprojected to 4326
+            and unioned (`.union_all()`).
+
+    Returns:
+        (shapely.Polygon): Boundary polygon in EPSG:4326.
+
+    Notes:
+        - Input `Polygon` is returned as-is (assumed already in EPSG:4326 by caller).
+        - For `MultiPolygon`, a **convex hull** is returned (may slightly expand the area and
+          fill gaps between parts).
+        - For `GeoDataFrame`, the geometry is first reprojected to 4326 and dissolved via
+          `.union_all()`; the result is then normalized to a `Polygon` (convex hull if needed).
+
+    Examples:
+        >>> get_4326_boundary(osm_id=1114252)             # fetch by OSM id
+        >>> get_4326_boundary(territory=poly4326)         # keep polygon
+        >>> get_4326_boundary(territory=multi_poly_4326)  # convex hull of multipart
+        >>> get_4326_boundary(territory=territory_gdf)    # GDF -> to_crs(4326) -> union_all -> Polygon
+    """
     if osm_id:
         territory = get_boundary_by_osm_id(osm_id)
 
@@ -331,6 +360,7 @@ def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
     json_result = resp.json()["elements"]
     return pd.DataFrame(json_result)
 
+
 def fetch_member_tags(members_missing, chunk_size=2000):
     """
     members_missing: iterable of dicts  {'type': 'node|way|relation', 'ref': int}
@@ -360,7 +390,7 @@ def fetch_member_tags(members_missing, chunk_size=2000):
     def _yield_chunks(type_key):
         arr = ids.get(type_key, [])
         for i in range(0, len(arr), chunk_size):
-            yield {type_key: arr[i:i+chunk_size]}
+            yield {type_key: arr[i : i + chunk_size]}
 
     chunks = []
     for tk in ("node", "way", "relation"):

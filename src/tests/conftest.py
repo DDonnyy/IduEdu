@@ -16,4 +16,4 @@ def bounds():
 def intermodal_graph(bounds):
     time.sleep(0.5)
     print("\n Downloading intermodal graph for bounds \n")
-    return get_intermodal_graph(polygon=bounds)
+    return get_intermodal_graph(territory=bounds)

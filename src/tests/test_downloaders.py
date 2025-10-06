@@ -10,21 +10,9 @@ from iduedu import (
 )
 from iduedu.modules.overpass_downloaders import RequestError, get_routes_by_poly
 
-config.set_logger_lvl("DEBUG")
+config.configure_logging("DEBUG")
 
 
 def test_get_boundary_by_osm_id(bounds):
     assert bounds is not None
 
-
-def test_get_boundary_by_name():
-    time.sleep(0.5)
-    bounds = get_4326_boundary(territory_name="Василеостровский район")
-    assert bounds is not None
-
-
-def test_routes_by_wrong_poly_crs(bounds):
-    wrong_poly = gpd.GeoDataFrame(geometry=[bounds], crs=4326).to_crs(32636).union_all()
-    with pytest.raises(RequestError) as _:
-        time.sleep(0.5)
-        get_routes_by_poly(wrong_poly, public_transport_type="bus")

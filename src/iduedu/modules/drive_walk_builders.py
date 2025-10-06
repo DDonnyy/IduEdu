@@ -1,25 +1,41 @@
 from typing import Literal
 
-import numpy as np
-import pandas as pd
 import geopandas as gpd
 import networkx as nx
+import numpy as np
+import pandas as pd
 from geopandas import GeoDataFrame
 from pyproj import CRS
-from shapely import line_merge, MultiLineString, LineString, Point, Polygon
+from shapely import LineString, MultiLineString, Polygon, line_merge
 from shapely.geometry.multipolygon import MultiPolygon
 
-from iduedu.enums.network_enums import Network
-from iduedu.enums.highway_enums import HighwayType
-from iduedu.modules.overpass_downloaders import get_network_by_filters
-from iduedu.utils.utils import estimate_crs_for_bounds, keep_largest_strongly_connected_component
-from iduedu.modules.overpass_downloaders import get_4326_boundary
 from iduedu import config
+from iduedu.enums.highway_enums import HighwayType
+from iduedu.enums.network_enums import Network
+from iduedu.modules.graph_transformers import estimate_crs_for_bounds, keep_largest_strongly_connected_component
+from iduedu.modules.overpass_downloaders import get_4326_boundary, get_network_by_filters
 
 logger = config.logger
 
 
-def get_highway_properties(highway) -> tuple[str, float]:
+def _get_highway_properties(highway) -> tuple[str, float]:
+    """
+    Map OSM `highway` class(es) to a regulatory category and a default speed.
+
+    Accepts either a single string or a list of classes. When multiple classes are present,
+    picks the lowest (most permissive) regulatory status and the minimum default speed among them.
+
+    Parameters:
+        highway (str | list[str]): OSM highway class or list of classes (e.g., "primary", "residential", ...).
+
+    Returns:
+        (tuple[str, float]): A pair `(category, maxspeed_mpm)` where:
+            - `category` (str): regulatory class label, e.g., "local" | "regional" | "federal".
+            - `maxspeed_mpm` (float): default speed for that class in **meters per minute**.
+
+    Notes:
+        If the class is unknown, returns defaults for `UNCLASSIFIED`.
+    """
     default = (HighwayType.UNCLASSIFIED.reg_status, HighwayType.UNCLASSIFIED.max_speed)
 
     if not highway:
@@ -47,7 +63,30 @@ def get_highway_properties(highway) -> tuple[str, float]:
 
 
 def _build_edges_from_overpass(polygon: Polygon, way_filter: str, simplify: bool = True) -> tuple[GeoDataFrame, CRS]:
+    """
+    Download OSM ways by filter, segment into edges, and project to a local CRS.
 
+    The function queries the ways within `polygon` using an Overpass `way_filter`, converts each way
+    into consecutive line segments (one edge per segment), and projects the result to a local metric CRS.
+    If `simplify=True`, contiguous segments are merged (`line_merge`), and OSM attributes are transferred
+    to merged lines via midpoint nearest join.
+
+    Parameters:
+        polygon (Polygon): Boundary polygon in EPSG:4326 used to query OSM data.
+        way_filter (str): Overpass filter applied to ways (e.g., `[ "highway" ~ "motorway|trunk|primary|..." ]`).
+        simplify (bool): If True, merges contiguous segments into longer edges and reattaches attributes
+            using a nearest midpoint join.
+
+    Returns:
+        (tuple[gpd.GeoDataFrame, CRS]): A pair `(edges, local_crs)` where:
+            - `edges` (GeoDataFrame): Line features in local CRS with columns:
+                `geometry` (LineString), `way_idx` (source way index), `id` (OSM way id), `tags` (dict).
+            - `local_crs` (pyproj.CRS): Estimated local projected CRS suitable for metric length computations.
+
+    Notes:
+        Attributes on merged edges are inferred from the nearest original segment around the midpoint,
+        which may drop or aggregate original per-segment variability.
+    """
     data = get_network_by_filters(polygon, way_filter)
     ways = data[data["type"] == "way"].copy()
 
@@ -71,8 +110,10 @@ def _build_edges_from_overpass(polygon: Polygon, way_filter: str, simplify: bool
     edges = edges.join(ways[["id", "tags"]], on="way_idx")
 
     if simplify:
-        # сшиваем ребра и переносим атрибуты через midpoints → nearest
-        merged = list(line_merge(MultiLineString(edges.geometry.to_list()), directed=True).geoms)
+        # сшиваем ребра и переносим атрибуты через midpoints -> nearest
+        merged = list(
+            line_merge(MultiLineString(edges.geometry.to_list()), directed=True).geoms
+        )  # TODO Можно быстрее, если разьединить по тегам и распараллелить, тоже самое в DRIVE
         lines = gpd.GeoDataFrame(geometry=merged, crs=local_crs)
 
         mid = lines.copy()
@@ -101,8 +142,44 @@ def get_drive_graph(
     osm_edge_tags: list[str] | None = None,  # overrides default tags
     keep_edge_geometry: bool = True,
 ) -> nx.MultiDiGraph:
+    """
+    Build a drivable road network (nx.MultiDiGraph) from OpenStreetMap within a given territory.
 
-    polygon4326 = get_4326_boundary(osm_id, territory)
+    The function downloads OSM ways via Overpass, segments them into directed edges, optionally merges
+    contiguous segments, duplicates two-way streets in reverse, and computes per-edge length (meters)
+    and travel time (minutes). Node coordinates are unique line endpoints in a local projected CRS.
+    Edge attributes can include selected OSM tags and a derived road category/speed.
+
+    Parameters:
+        osm_id (int | None): OSM relation/area ID of the territory boundary. Provide this or `territory`.
+        territory (Polygon | MultiPolygon | gpd.GeoDataFrame | None): Boundary geometry in EPSG:4326 or GeoDataFrame.
+            Used when `osm_id` is not given.
+        simplify (bool): If True, merges contiguous collinear segments and transfers attributes
+            back to merged lines using nearest midpoints. If False, keeps raw per-segment edges.
+        add_road_category (bool): If True, adds a derived `category` (e.g., local/regional/federal) and a default
+            speed (`maxspeed_mpm`) inferred from the OSM `highway` class.
+        clip_by_territory (bool): If True, clips edges by the exact boundary geometry before graph construction.
+        keep_largest_subgraph (bool): If True, returns only the largest strongly connected component.
+        network_type (Literal["drive","drive_service","custom"]): Preset of Overpass filters to select drivable ways.
+            Use "custom" together with `custom_filter` to pass your own Overpass `way` filter.
+        custom_filter (str | None): Custom Overpass filter (e.g., `["highway"~"motorway|trunk|…"]`) used when
+            `network_type="custom"`.
+        osm_edge_tags (list[str] | None): Which OSM tags to retain on edges. Overrides defaults from config.
+            The tags `oneway`, `maxspeed`, and `highway` are always added.
+        keep_edge_geometry (bool): If True, stores shapely geometries on edges (`geometry` attribute).
+
+    Returns:
+        (nx.MultiDiGraph): Directed multigraph of the road network. Each edge carries:
+            - `geometry` (if `keep_edge_geometry=True`) in local CRS,
+            - `length_meter` (float), `time_min` (float),
+            - `type="drive"`,
+            - selected OSM tags (incl. `highway`, `maxspeed`, `oneway`, optional `category`, etc.).
+            Graph-level attributes: `graph["crs"]` (local projected CRS), `graph["type"]` (network_type).
+
+    Raises:
+        ValueError: If `network_type` is unknown, or `network_type="custom"` without `custom_filter`.
+    """
+    polygon4326 = get_4326_boundary(osm_id=osm_id, territory=territory)
 
     filters = {
         "drive": Network.DRIVE.filter,
@@ -159,7 +236,7 @@ def get_drive_graph(
     edges["u"] = u
     edges["v"] = v
 
-    edges[["category", "maxspeed_mpm"]] = edges["highway"].apply(lambda h: pd.Series(get_highway_properties(h)))
+    edges[["category", "maxspeed_mpm"]] = edges["highway"].apply(lambda h: pd.Series(_get_highway_properties(h)))
 
     maxspeed_osm_mpm = (pd.to_numeric(edges["maxspeed"], errors="coerce") * 1000.0 / 60.0).round(3)
 
@@ -178,7 +255,7 @@ def get_drive_graph(
     if keep_edge_geometry:
         needed_tags |= {"geometry"}
     needed_tags |= {"length_meter", "time_min", "type"}
-    edge_attr_cols = list(needed_tags)
+    edge_attr_cols = list(tag for tag in needed_tags if tag in edges.columns)
     attrs_iter = edges[edge_attr_cols].to_dict("records")
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
@@ -206,8 +283,48 @@ def get_walk_graph(
     osm_edge_tags: list[str] | None = None,  # overrides default tags
     keep_edge_geometry: bool = True,
 ) -> nx.MultiDiGraph:
+    """
+    Build a pedestrian network (nx.MultiDiGraph) from OpenStreetMap within a given territory.
 
-    polygon4326 = get_4326_boundary(osm_id, territory)
+    The function fetches OSM ways via Overpass using a walking filter, splits each way into directed
+    line segments, duplicates all segments in reverse, and computes per-edge length (meters) and traversal time
+    (minutes) using a given walking speed (m/min). Node coordinates are unique segment endpoints in a local
+    projected CRS. Selected OSM tags can be attached to edges.
+
+    Parameters:
+        osm_id (int | None): OSM relation/area ID for the boundary. Provide this or `territory`.
+        territory (Polygon | MultiPolygon | gpd.GeoDataFrame | None): Boundary geometry (EPSG:4326) or a GeoDataFrame
+            to define the area when `osm_id` is not given.
+        simplify (bool): If True, merges contiguous segments (via internal line merging) and transfers attributes
+            back to merged lines using nearest midpoints; if False, keeps raw per-segment edges.
+        clip_by_territory (bool): If True, clips edges by the provided boundary before graph construction.
+        keep_largest_subgraph (bool): If True, retains only the largest strongly connected component.
+        walk_speed (float): Walking speed in meters per minute used to compute `time_min` for each edge.
+        network_type (Literal["walk","custom"]): Preset of Overpass filters. Use "custom" together with `custom_filter`
+            to pass your own way filter.
+        custom_filter (str | None): Custom Overpass filter string used when `network_type="custom"`.
+        osm_edge_tags (list[str] | None): List of OSM edge tags to retain (overrides defaults). Only these keys
+            are joined from element tags.
+        keep_edge_geometry (bool): If True, stores shapely `geometry` on edges in the local projected CRS.
+
+    Returns:
+        (nx.MultiDiGraph): Directed multigraph of the walking network. Each edge carries:
+            - `geometry` (if `keep_edge_geometry=True`), local CRS,
+            - `length_meter` (float), `time_min` (float),
+            - `type="walk"`,
+            - selected OSM tags (as requested).
+            Graph attributes include: `graph["crs"]` (local projected CRS),
+            `graph["walk_speed"]` (float), and `graph["type"]` (network_type).
+
+    Raises:
+        ValueError: If `network_type` is unknown, or `network_type="custom"` without `custom_filter`.
+
+    Notes:
+        All walking edges are treated as bidirectional by duplicating geometries in reverse; u/v nodes
+        are assigned by factorizing unique segment endpoints. Lengths are measured in meters in a local
+        projected CRS estimated from the territory bounds.
+    """
+    polygon4326 = get_4326_boundary(osm_id=osm_id, territory=territory)
 
     filters = {
         "walk": Network.WALK.filter,

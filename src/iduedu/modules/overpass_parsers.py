@@ -1,5 +1,7 @@
 import math
 import warnings
+from collections import defaultdict
+from itertools import chain, combinations
 
 import numpy as np
 import pandas as pd
@@ -7,13 +9,8 @@ from pandas import DataFrame
 from pyproj import CRS, Transformer
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
-from shapely import Point
-from shapely.geometry import LineString
+from shapely import LineString, Point
 from shapely.ops import substring
-from collections import defaultdict
-from itertools import chain
-from shapely import LineString
-from itertools import combinations
 
 from iduedu.modules.overpass_downloaders import fetch_member_tags
 
@@ -97,7 +94,7 @@ def _link_unconnected(disconnected_ways) -> list:
 
 def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -> pd.Series:
     transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
-
+    # TODO надо писать версию с merge_line и отдельными запросами по максимальной скорости
     def transform_geometry(loc):
         if isinstance(loc["geometry"], float):
             return transformer.transform(loc["lon"], loc["lat"])
