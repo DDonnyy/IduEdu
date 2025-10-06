@@ -262,6 +262,9 @@ def gdf_to_graph(
     else:
         lines = line_merge(MultiLineString(gdf.geometry.to_list()))
 
+    if isinstance(lines,LineString):
+        lines = MultiLineString([lines])
+
     lines = gpd.GeoDataFrame(geometry=list(lines.geoms), crs=gdf.crs)
 
     if len(gdf.columns) > 1 and project_gdf_attr:

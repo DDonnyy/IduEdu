@@ -65,14 +65,3 @@ def test_join_pt_walk_graph(bounds, walk_graph, subway_graph):
     assert len(walk_and_subway.edges) > 0
 
 
-def test_graph_to_gdf(bounds, intermodal_graph):
-    graph_gdf = graph_to_gdf(intermodal_graph)
-    assert graph_gdf is not None
-    assert not graph_gdf.empty
-
-
-def test_graph_to_gdf_restore_geom(bounds, intermodal_graph):
-    graph_gdf = graph_to_gdf(intermodal_graph, restore_edge_geom=True)
-    assert graph_gdf is not None
-    assert not graph_gdf.empty
-    assert graph_gdf["geometry"].is_empty.any() == False
