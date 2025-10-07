@@ -1,5 +1,4 @@
 # pylint: disable=redefined-outer-name, unused-import
-import time
 
 import pytest
 
@@ -8,7 +7,6 @@ from iduedu import (
     get_drive_graph,
     get_single_public_transport_graph,
     get_walk_graph,
-    graph_to_gdf,
     join_pt_walk_graph,
 )
 
@@ -63,5 +61,3 @@ def test_join_pt_walk_graph(bounds, walk_graph, subway_graph):
     assert walk_and_subway is not None
     assert len(walk_and_subway.nodes) > 0
     assert len(walk_and_subway.edges) > 0
-
-

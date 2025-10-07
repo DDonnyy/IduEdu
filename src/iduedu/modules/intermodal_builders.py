@@ -48,6 +48,7 @@ def join_pt_walk_graph(
             - nodes: union of PT and Walk nodes (platforms become vertices of the walk network);
             - edges: original PT + split/updated Walk edges with `geometry`, `length_meter`,
               `time_min`, `type="walk"` (for inserted walking segments).
+
             Graph attrs: `graph["type"]="intermodal"`; CRS is inherited from inputs.
 
     Notes:
@@ -330,6 +331,7 @@ def get_intermodal_graph(
             - node attrs: `x`, `y` (local CRS), plus PT metadata for platform/station nodes where present;
             - edge attrs: `type` (e.g., "walk", PT edge types), `length_meter`, `time_min`, optional `geometry`,
               and selected OSM tags.
+
           Graph CRS equals the builders’ local projected CRS.
 
     Notes:

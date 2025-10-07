@@ -8,7 +8,7 @@ from pyproj.aoi import AreaOfInterest
 
 # pylint: disable=no-name-in-module
 from pyproj.database import query_utm_crs_info
-from shapely import Point, Polygon, LineString, line_merge, node, MultiLineString, from_wkt
+from shapely import LineString, MultiLineString, Point, Polygon, from_wkt, line_merge, node
 from shapely.geometry.base import BaseGeometry
 
 
@@ -25,9 +25,6 @@ def clip_nx_graph(graph: nx.Graph, polygon: Polygon) -> nx.Graph:
 
     Returns:
         (nx.Graph): Subgraph containing only nodes whose points fall inside the polygon.
-
-    Raises:
-        KeyError: If `graph.graph["crs"]` is missing.
 
     Notes:
         Edges are preserved only if both endpoints remain in the subgraph.
@@ -232,6 +229,7 @@ def gdf_to_graph(
         (nx.DiGraph): Directed graph with:
             - node attributes: `x`, `y`;
             - edge attributes: `geometry`, `length_meter`, `time_min`, plus projected attributes;
+
             Graph attribute `graph["crs"]` is set to the (possibly reprojected) CRS.
 
     Raises:
@@ -262,7 +260,7 @@ def gdf_to_graph(
     else:
         lines = line_merge(MultiLineString(gdf.geometry.to_list()))
 
-    if isinstance(lines,LineString):
+    if isinstance(lines, LineString):
         lines = MultiLineString([lines])
 
     lines = gpd.GeoDataFrame(geometry=list(lines.geoms), crs=gdf.crs)

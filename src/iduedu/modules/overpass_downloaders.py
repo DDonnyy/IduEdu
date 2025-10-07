@@ -161,7 +161,7 @@ def _overpass_request(
                     except Exception:
                         wait_s = 5
                 wait_s = max(wait_s, 1)
-                logger.warning(f"HTTP 429: honoring Retry-After={wait_s}")
+                logger.debug(f"HTTP 429: honoring Retry-After={wait_s}")
                 time.sleep(wait_s)
             else:
                 try:
@@ -169,7 +169,7 @@ def _overpass_request(
                 except RequestError:
                     pause = 0
                 wait_s = max(1, pause or int(backoff_base**attempt))
-                logger.warning(f"HTTP 429: waiting {wait_s} seconds before retry")
+                logger.debug(f"HTTP 429: waiting {wait_s} seconds before retry")
                 time.sleep(wait_s)
 
             if attempt < max_retries:

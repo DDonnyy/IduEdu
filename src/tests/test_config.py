@@ -1,14 +1,12 @@
 # pylint: disable=redefined-outer-name
-import os
-import sys
 
 import pytest
 from loguru import logger
 
 from iduedu._config import Config
 
-
 # ---------- fixtures ----------
+
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
@@ -26,6 +24,7 @@ def _clean_env(monkeypatch):
     ]:
         monkeypatch.delenv(k, raising=False)
     yield
+
 
 def test_defaults_no_env_and_tty(monkeypatch):
     cfg = Config()

@@ -94,6 +94,7 @@ def _link_unconnected(disconnected_ways) -> list:
 
 def parse_overpass_route_response(loc: dict, crs: CRS, needed_tags: list[str]) -> pd.Series:
     transformer = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+
     # TODO надо писать версию с merge_line и отдельными запросами по максимальной скорости
     def transform_geometry(loc):
         if isinstance(loc["geometry"], float):

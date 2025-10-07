@@ -9,7 +9,8 @@ from tqdm.contrib.concurrent import process_map, thread_map
 from iduedu import config
 from iduedu.enums.pt_enums import PublicTrasport
 from iduedu.modules.overpass_parsers import parse_overpass_subway_data, parse_overpass_to_edgenode
-from .graph_transformers import estimate_crs_for_bounds, clip_nx_graph
+
+from .graph_transformers import clip_nx_graph, estimate_crs_for_bounds
 from .overpass_downloaders import (
     get_4326_boundary,
     get_routes_by_poly,
@@ -370,6 +371,7 @@ def get_single_public_transport_graph(
         (nx.DiGraph): Directed PT graph with:
             - node attrs: `x`, `y` (floats, local CRS), `type`, `route`, `ref_id`, plus merged station `extra_data` (if any);
             - edge attrs: `type`, `route`, `length_meter`, `time_min`, optional `geometry`, and selected OSM tags.
+
           Graph attrs: `graph["crs"]` (EPSG int of the local projected CRS), `graph["type"]` = `"public_trasport"`.
 
     Notes:
@@ -421,11 +423,12 @@ def get_all_public_transport_graph(
         (nx.DiGraph): Combined directed PT graph. Typical attributes:
             - node attrs: `x`, `y` (local CRS), `type`, `route`, `ref_id`, station `extra_data` where applicable;
             - edge attrs: `type`, `route`, `length_meter`, `time_min`, optional `geometry`, plus selected OSM tags.
+
           Graph attrs: `graph["crs"]` (EPSG int), `graph["type"]` = `"public_trasport"`.
 
     Notes:
-        - Each mode’s ways are downloaded inside the boundary and transformed into directed edges; per-edge speeds are
-          taken from mode-specific defaults (and, for subway connectors, from connector-type defaults).
+        Each mode’s ways are downloaded inside the boundary and transformed into directed edges; per-edge speeds are
+        taken from mode-specific defaults (and, for subway connectors, from connector-type defaults).
     """
 
     if transport_types is None:

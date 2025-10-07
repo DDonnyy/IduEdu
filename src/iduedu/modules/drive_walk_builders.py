@@ -174,6 +174,7 @@ def get_drive_graph(
             - `length_meter` (float), `time_min` (float),
             - `type="drive"`,
             - selected OSM tags (incl. `highway`, `maxspeed`, `oneway`, optional `category`, etc.).
+
             Graph-level attributes: `graph["crs"]` (local projected CRS), `graph["type"]` (network_type).
 
     Raises:
@@ -313,6 +314,7 @@ def get_walk_graph(
             - `length_meter` (float), `time_min` (float),
             - `type="walk"`,
             - selected OSM tags (as requested).
+
             Graph attributes include: `graph["crs"]` (local projected CRS),
             `graph["walk_speed"]` (float), and `graph["type"]` (network_type).
 
