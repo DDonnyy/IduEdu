@@ -213,10 +213,6 @@ def _graph_data_to_nx(graph_df, keep_geometry: bool = True, additional_data=None
     return graph
 
 
-def _multi_get_routes_by_poly(args):
-    return get_routes_by_poly(*args)
-
-
 def _multi_parse_overpass_to_edgenode(args):
     return parse_overpass_to_edgenode(*args)
 
@@ -256,8 +252,6 @@ def _get_public_transport_graph(
 
     polygon = get_4326_boundary(osm_id=osm_id, territory=territory)
 
-    args_list = [(polygon, transport) for transport in transport_types]
-
     # Если парсим метро - ожидаем в ответе информацию о станциях
     platform_stop_data_use = False
     if "subway" in transport_types:
@@ -265,15 +259,8 @@ def _get_public_transport_graph(
 
     if not config.enable_tqdm_bar:
         logger.debug("Downloading pt routes")
-    overpass_data = pd.concat(
-        thread_map(
-            _multi_get_routes_by_poly,
-            args_list,
-            desc="Downloading public transport routes from OSM",
-            disable=not config.enable_tqdm_bar,
-        ),
-        ignore_index=True,
-    ).reset_index(drop=True)
+
+    overpass_data = get_routes_by_poly(polygon, transport_types)
 
     if overpass_data.shape[0] == 0:
         logger.warning("No routes found for public transport.")

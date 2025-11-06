@@ -1,5 +1,6 @@
 import datetime as dt
 import math
+import re
 import time
 from collections import defaultdict
 from typing import Literal
@@ -293,67 +294,88 @@ def _poly_to_overpass(poly: Polygon) -> str:
     return " ".join(f"{y} {x}" for x, y in poly.exterior.coords[:-1])
 
 
-def get_routes_by_poly(polygon: Polygon, public_transport_type: str) -> pd.DataFrame:
-    if public_transport_type == "subway":
-        return get_subway_routes_by_poly(polygon)
-    polygon_coords = _poly_to_overpass(polygon)
-    overpass_query = f"""
-        [out:json][timeout:{config.timeout}];
-                (
-                    relation(poly:\"{polygon_coords}\")[ 'route' = '{public_transport_type}' ];
-                );
-        out geom;
-        """
-    logger.debug(f"Downloading routes from OSM with type <{public_transport_type}> ...")
-    resp = _overpass_request(
-        method="POST",
-        overpass_url=config.overpass_url,
-        data={"data": overpass_query},
-    )
-    json_result = resp.json()["elements"]
-    data = pd.DataFrame(json_result)
-    data["transport_type"] = public_transport_type
-    return data
+def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> pd.DataFrame:
+    public_transport_types = list(dict.fromkeys(public_transport_types))
+    has_subway = "subway" in public_transport_types
+    non_subway_types = [t for t in public_transport_types if t != "subway"]
 
-
-def get_subway_routes_by_poly(polygon: Polygon) -> pd.DataFrame:
     polygon_coords = _poly_to_overpass(polygon)
-    overpass_query = f"""
-        [out:json][timeout:500];
+
+    query_parts = [f"[out:json][timeout:{config.timeout}];"]
+
+    if non_subway_types:
+        if len(non_subway_types) == 1:
+            route_filter = f'["route"="{non_subway_types[0]}"]'
+        else:
+
+            pattern = "|".join(re.escape(t) for t in non_subway_types)
+            route_filter = f'["route"~"^({pattern})$"]'
+
+        query_parts.append(f'rel(poly:"{polygon_coords}"){route_filter}->.non_subway;')
+
+    if has_subway:
+        query_parts.append(
+            f"""
             rel(poly:"{polygon_coords}")["route"="subway"]->.routes;
-            node(r.routes)-> .route_nodes;
+            node(r.routes)->.route_nodes;
             rel(bn.route_nodes)->.stop_areas;
             rel(br.stop_areas)["public_transport"="stop_area_group"]["type"="public_transport"]->.groups;
             nwr(r.stop_areas)["public_transport"="station"]->.stations;
-            .stop_areas     out geom qt;
-            .groups         out body qt;
-            .stations       out tags qt;
-        """
+            """.strip()
+        )
 
-    logger.debug(f"Downloading subway routes data from OSM ...")
+    if non_subway_types:
+        query_parts.append(".non_subway out geom qt;")
+
+    if has_subway:
+        query_parts.append(
+            """
+            .stop_areas out geom qt;
+            .groups     out body qt;
+            .stations   out tags qt;
+            """.strip()
+        )
+
+    overpass_query = "\n".join(query_parts)
+
+    logger.info(
+        "Downloading routes from OSM with types <%s> ...",
+        ", ".join(public_transport_types),
+    )
+
     resp = _overpass_request(
         method="POST",
         overpass_url=config.overpass_url,
         data={"data": overpass_query},
     )
-    json_result = resp.json()["elements"]
-    if len(json_result) == 0:
+    json_result = resp.json().get("elements", [])
+    if not json_result:
         return pd.DataFrame()
 
     for e in json_result:
         tags = e.get("tags") or {}
         etype = e.get("type")
 
-        e["is_stop_area"] = etype == "relation" and tags.get("public_transport") == "stop_area"
-        e["is_stop_area_group"] = (
-            etype == "relation"
-            and tags.get("public_transport") == "stop_area_group"
-            and tags.get("type") == "public_transport"
-        )
-        e["is_station"] = tags.get("public_transport") == "station"
+        route_type = tags.get("route")
+        e["transport_type"] = route_type
+
+        if has_subway:
+            is_stop_area = etype == "relation" and tags.get("public_transport") == "stop_area"
+            is_stop_area_group = (
+                etype == "relation"
+                and tags.get("public_transport") == "stop_area_group"
+                and tags.get("type") == "public_transport"
+            )
+            is_station = tags.get("public_transport") == "station"
+
+            e["is_stop_area"] = is_stop_area
+            e["is_stop_area_group"] = is_stop_area_group
+            e["is_station"] = is_station
+
+            if is_stop_area or is_stop_area_group or is_station:
+                e["transport_type"] = "subway"
 
     data = pd.DataFrame(json_result)
-    data["transport_type"] = "subway"
     return data
 
 
