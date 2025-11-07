@@ -51,7 +51,6 @@ def _overpass_http(
     method: Literal["GET", "POST"], url: str, *, params=None, data=None, timeout=None
 ) -> requests.Response:
     OVERPASS_RL.wait()
-
     headers = {"User-Agent": config.user_agent}
     proxies = config.proxies
     verify = config.verify_ssl
@@ -209,13 +208,12 @@ def _overpass_request(
 
 
 def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
+    header = config.overpass_header
     overpass_query = f"""
-                [out:json];
-                        (
-                            relation({osm_id});
-                        );
-                out geom;
-                """
+                    {header}
+                    (relation({osm_id}););
+                    out geom;
+                    """
     logger.debug(f"Downloading territory bounds with osm_id <{osm_id}> ...")
     resp = _overpass_request(
         method="GET",
@@ -296,24 +294,39 @@ def _poly_to_overpass(poly: Polygon) -> str:
 
 def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> pd.DataFrame:
     public_transport_types = list(dict.fromkeys(public_transport_types))
+    if not public_transport_types:
+        return pd.DataFrame()
+
     has_subway = "subway" in public_transport_types
     non_subway_types = [t for t in public_transport_types if t != "subway"]
 
+    has_date = config.overpass_date is not None
+
+    if has_subway and has_date:
+        logger.warning(
+            f"Overpass date is set ({config.overpass_date}); skipping subway stop area / station details "
+            "and querying subway as regular route relations only."
+        )
+
     polygon_coords = _poly_to_overpass(polygon)
 
-    query_parts = [f"[out:json][timeout:{config.timeout}];"]
+    header = config.overpass_header
+    query_parts = [header]
 
-    if non_subway_types:
-        if len(non_subway_types) == 1:
-            route_filter = f'["route"="{non_subway_types[0]}"]'
+    simple_route_types = public_transport_types if has_date else non_subway_types
+
+    if simple_route_types:
+        if len(simple_route_types) == 1:
+            route_filter = f'["route"="{simple_route_types[0]}"]'
         else:
-
-            pattern = "|".join(re.escape(t) for t in non_subway_types)
+            pattern = "|".join(re.escape(t) for t in simple_route_types)
             route_filter = f'["route"~"^({pattern})$"]'
 
-        query_parts.append(f'rel(poly:"{polygon_coords}"){route_filter}->.non_subway;')
+        query_parts.append(f'rel(poly:"{polygon_coords}"){route_filter}->.routes_basic;')
 
-    if has_subway:
+    enable_subway_details = has_subway and not has_date
+
+    if enable_subway_details:
         query_parts.append(
             f"""
             rel(poly:"{polygon_coords}")["route"="subway"]->.routes;
@@ -324,10 +337,10 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> p
             """.strip()
         )
 
-    if non_subway_types:
-        query_parts.append(".non_subway out geom qt;")
+    if simple_route_types:
+        query_parts.append(".routes_basic out geom qt;")
 
-    if has_subway:
+    if enable_subway_details:
         query_parts.append(
             """
             .stop_areas out geom qt;
@@ -338,11 +351,6 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> p
 
     overpass_query = "\n".join(query_parts)
 
-    logger.info(
-        "Downloading routes from OSM with types <%s> ...",
-        ", ".join(public_transport_types),
-    )
-
     resp = _overpass_request(
         method="POST",
         overpass_url=config.overpass_url,
@@ -350,7 +358,10 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> p
     )
     json_result = resp.json().get("elements", [])
     if not json_result:
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        for col in ("is_stop_area", "is_stop_area_group", "is_station"):
+            empty[col] = pd.Series(dtype=bool)
+        return empty
 
     for e in json_result:
         tags = e.get("tags") or {}
@@ -359,7 +370,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> p
         route_type = tags.get("route")
         e["transport_type"] = route_type
 
-        if has_subway:
+        if enable_subway_details:
             is_stop_area = etype == "relation" and tags.get("public_transport") == "stop_area"
             is_stop_area_group = (
                 etype == "relation"
@@ -376,16 +387,24 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> p
                 e["transport_type"] = "subway"
 
     data = pd.DataFrame(json_result)
+
+    for col in ("is_stop_area", "is_stop_area_group", "is_station"):
+        if col not in data.columns:
+            data[col] = False
+        else:
+            data[col] = data[col].fillna(False).astype(bool)
+
     return data
 
 
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
     polygon_coords = _poly_to_overpass(polygon)
+    header = config.overpass_header
     overpass_query = f"""
-        [out:json][timeout:{config.timeout}];
-            (way{way_filter}(poly:\"{polygon_coords}\"););
-        out geom;
-        """
+                    {header}
+                    (way{way_filter}(poly:"{polygon_coords}"););
+                    out geom;
+                    """
     logger.debug(f"Downloading network from OSM with filters <{way_filter}> ...")
     resp = _overpass_request(
         method="POST",
@@ -421,7 +440,8 @@ def fetch_member_tags(members_missing, chunk_size=2000):
         if sub_ids.get("relation"):
             parts.append(f'rel(id:{",".join(map(str, sub_ids["relation"]))});')
         body = "\n".join(parts)
-        return f"[out:json][timeout:{config.timeout}];\n(\n{body}\n);\nout tags center qt;"
+        header = config.overpass_header
+        return f"{header}\n(\n{body}\n);\nout tags center qt;"
 
     def _yield_chunks(type_key):
         arr = ids.get(type_key, [])

@@ -254,13 +254,13 @@ def _get_public_transport_graph(
 
     # Если парсим метро - ожидаем в ответе информацию о станциях
     platform_stop_data_use = False
-    if "subway" in transport_types:
+    if "subway" in transport_types and config.overpass_date is None:
         platform_stop_data_use = True
 
-    if not config.enable_tqdm_bar:
-        logger.debug("Downloading pt routes")
-
+    ptts = ", ".join(transport_types)
+    logger.info(f"Downloading routes via Overpass with types {ptts} ...")
     overpass_data = get_routes_by_poly(polygon, transport_types)
+    logger.info(f"Downloading routes via Overpass with types {ptts} done!")
 
     if overpass_data.shape[0] == 0:
         logger.warning("No routes found for public transport.")
