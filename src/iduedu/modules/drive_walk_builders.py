@@ -340,7 +340,6 @@ def get_walk_graph(
     if network_type == "custom" and road_filter is None:
         raise ValueError("For road_type='custom' you must provide custom_filter")
 
-
     edges, local_crs = _build_edges_from_overpass(polygon4326, road_filter, simplify=simplify)
 
     if osm_edge_tags is None:

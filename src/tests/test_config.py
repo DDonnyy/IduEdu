@@ -5,7 +5,6 @@ from loguru import logger
 
 from iduedu._config import Config
 
-
 # ---------- fixtures ----------
 
 
@@ -224,7 +223,6 @@ def test_build_overpass_header_custom_timeout_and_date_override():
 
     header2 = cfg.build_overpass_header(timeout=10, date="2021-02-03T00:00:00Z")
     assert header2 == '[out:json][timeout:10][date:"2021-02-03T00:00:00Z"];'
-
 
 
 def test_to_dict_roundtrip_structure():
