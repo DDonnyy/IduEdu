@@ -212,6 +212,9 @@ def join_pt_walk_graph(
                 for ind, platform in zip(row["index"], row.geometry)
             ]
             dist_project.sort(key=lambda x: x[0])
+
+            # TODO две РАЗНЫЕ платформы проецируются в одну точку
+
             u_to_del = u
             v_to_del = v
             last_dist = 0
@@ -235,7 +238,7 @@ def join_pt_walk_graph(
                     # По очереди добавляем ноды/линии
                     line = substring(edge, last_dist, dist)
                     if isinstance(line, Point):
-                        raise ValueError(f"wtf {line} cannot be linestring")
+                        raise ValueError(f"wtf {line} cannot be linestring, substring({last_dist}, {dist})")
                     walk.add_node(cur_index, x=round(projected_point.x, 5), y=round(projected_point.y, 5))
                     walk.add_edge(
                         last_u,

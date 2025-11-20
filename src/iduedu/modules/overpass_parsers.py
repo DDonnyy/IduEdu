@@ -515,7 +515,7 @@ def patch_members_roles_inplace(stop_areas_df):
 
 def parse_overpass_subway_data(
     stop_areas, stop_areas_group, stations_data, to_crs
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame] | None:
     graph_nodes = []
     graph_edges = []
 
@@ -680,6 +680,8 @@ def parse_overpass_subway_data(
                 return 0.0
         return 0.0
 
+    if len(nodes_gdf) == 0:
+        return None
     nodes_info = nodes_gdf[["ref_id", "point", "type", "extra_data"]].copy()
     nodes_info["depth_m"] = nodes_info["extra_data"].apply(_depth_from_extra)
 
