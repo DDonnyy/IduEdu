@@ -316,8 +316,8 @@ def join_pt_walk_graph(
 
             if merge_mapping:
                 nx.relabel_nodes(walk, merge_mapping, copy=False)
-                points_grouped_by_edge["u"].replace(merge_mapping, inplace=True)
-                points_grouped_by_edge["v"].replace(merge_mapping, inplace=True)
+                points_grouped_by_edge["u"] = points_grouped_by_edge["u"].replace(merge_mapping)
+                points_grouped_by_edge["v"] = points_grouped_by_edge["v"].replace(merge_mapping)
 
                 u_to_del = merge_mapping.get(u_to_del, u_to_del)
                 v_to_del = merge_mapping.get(v_to_del, v_to_del)
