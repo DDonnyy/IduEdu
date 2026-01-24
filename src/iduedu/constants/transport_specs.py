@@ -1,5 +1,7 @@
 from dataclasses import dataclass, replace
 
+# TODO ограничить значения параметров name в TransportSpec
+
 
 @dataclass(frozen=True, slots=True)
 class TransportSpec:

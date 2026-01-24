@@ -114,7 +114,7 @@ def _graph_data_to_nx(
     vals.columns = ["length_meter", "time_min"]
     graph_edges_df.loc[mask_missing, ["length_meter", "time_min"]] = vals
 
-    graph = nx.DiGraph()
+    graph = nx.DiGraph()  # todo multiDiGraph должен быть!
 
     for idx, node in all_nodes.iterrows():
         route = list(set(node["route"])) if isinstance(node["route"], tuple) else [node["route"]]
@@ -234,7 +234,7 @@ def _build_public_transport_graph(
     graph_edges_df = []
     graph_nodes_df = []
 
-    ground_types = {"bus", "tram", "trolleybus"}
+    ground_types = {"bus", "tram", "trolleybus", "train"}
     ground_pt_data = overpass_data[
         (overpass_data["transport_type"].isin(ground_types)) & (~overpass_data["is_way_data"])
     ].copy()
@@ -295,6 +295,7 @@ def _build_public_transport_graph(
     return nx_graph
 
 
+# TODO добавить вес на boarding эджи (время ожидания по расписанию)
 def get_public_transport_graph(
     *,
     osm_id: int | None = None,

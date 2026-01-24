@@ -16,6 +16,7 @@ from iduedu.modules.overpass.overpass_downloaders import get_4326_boundary
 logger = config.logger
 
 
+# TODO перевести комментари, добавить новые
 def join_pt_walk_graph(
     public_transport_g: nx.Graph,
     walk_g: nx.Graph,
