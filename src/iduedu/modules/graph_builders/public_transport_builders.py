@@ -209,7 +209,6 @@ def _build_public_transport_graph(
     logger.info(f"Downloading routes via Overpass with types {ptts} ...")
     overpass_response: list[dict] = get_routes_by_poly(polygon, transport_types)
     overpass_data = overpass_routes_to_df(overpass_response, enable_subway_details=expect_subway)
-    logger.info(f"Downloading routes via Overpass with types {ptts} done!")
 
     if overpass_data.shape[0] == 0:
         logger.warning("No routes found for public transport.")

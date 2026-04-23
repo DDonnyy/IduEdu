@@ -6,6 +6,7 @@
 [![Coverage](https://codecov.io/gh/DDonnyy/IduEdu/graph/badge.svg?token=VN8CBP8ZW3)](https://codecov.io/gh/DDonnyy/IduEdu)
 [![License](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/docs-latest-4aa0d5?logo=readthedocs)](https://iduclub.github.io/IduEdu/)
+[![GitHub](https://img.shields.io/badge/GitHub-IDUclub%2FIduEdu-181717?logo=github)](https://github.com/IDUclub/IduEdu)
 
 <p align="center">
 <img src="./docs/_static/leftguy.svg" alt="logo" height="250">
@@ -26,13 +27,13 @@ The package also includes fast matrix tools to compute large origin–destinatio
 - **Graph Builders**
   - `get_drive_graph` — driving network with speeds & categories
   - `get_walk_graph` — pedestrian network (bi‑directional)
-  - `get_all_public_transport_graph` / `get_single_public_transport_graph` — bus, tram, trolleybus, subway
+  - `get_public_transport_graph` — bus, tram, trolleybus, subway
   - `get_intermodal_graph` — compose PT + walk with platform snapping
 - **Geometry & CRS Correctness**
   - Local UTM estimation for accurate metric lengths
   - Safe graph ↔ GeoDataFrame conversion; optional geometry restoration
 - **Matrices**
-  - `get_adj_matrix_gdf_to_gdf` — OD matrices by length/time using Numba accelerated Dijkstra
+  - `get_od_matrix_gdf_to_gdf` — OD matrices by length/time using Numba accelerated Dijkstra
   - `get_closest_nodes` — nearest node snapping
 - **Utilities**
   - `clip_nx_graph`, `reproject_graph`, `read_gml`/`write_gml`, etc.
@@ -45,7 +46,7 @@ The package also includes fast matrix tools to compute large origin–destinatio
 pip install iduedu
 ```
 
-> Requires Python 3.10+ and common geospatial stack (GeoPandas, Shapely, PyProj, NetworkX, NumPy, Pandas).
+> Requires Python 3.11+ and common geospatial stack (GeoPandas, Shapely, PyProj, NetworkX, NumPy, Pandas).
 
 ---
 
@@ -66,17 +67,16 @@ G = get_intermodal_graph(osm_id=1114252)  # e.g., Saint Petersburg, Vasileostrov
 
 ```python
 import geopandas as gpd
-from iduedu import get_adj_matrix_gdf_to_gdf
+from iduedu import get_od_matrix_gdf_to_gdf
 
 # origins/destinations can be any geometries; representative points are used
 origins = gpd.GeoDataFrame(geometry=[...], crs=...)
 destinations = gpd.GeoDataFrame(geometry=[...], crs=...)
 
-M = get_adj_matrix_gdf_to_gdf(
+M = get_od_matrix_gdf_to_gdf(
     origins, destinations, G, weight="time_min", dtype="float32", threshold=None
 )
 print(M.head())
-
 ```
 
 ---
@@ -107,6 +107,8 @@ IduEdu now supports optional file-based caching of Overpass responses to reduce 
 - Configure cache at runtime
 
 ```python
+from iduedu import config
+
 # disable cache entirely
 config.set_overpass_cache(enabled=False)
 
@@ -114,29 +116,36 @@ config.set_overpass_cache(enabled=False)
 config.set_overpass_cache(cache_dir="/var/tmp/iduedu_overpass_cache", enabled=True)
 ```
 
-- Environment variables (alternative to runtime config)
-  - OVERPASS_CACHE_DIR — path to cache directory (e.g. /tmp/overpass_cache)
-  - OVERPASS_CACHE_ENABLED — "0" / "false" to disable, any other value enables
+- Environment variables:
 
+```bash
+export OVERPASS_CACHE_DIR="/tmp/overpass_cache"
+export OVERPASS_CACHE_ENABLED="1"  # "0" or "false" disables cache
+```
 
-- Notes
-  - The cache only stores raw Overpass JSON responses (not derived graphs).
-  - To force fresh downloads, either remove the cache files in the cache directory or disable caching for the run using `config.set_overpass_cache(enabled=False)`.
+- Behavior notes:
+  - Cache is enabled by default and uses ".iduedu_cache" as the default directory.
+  - The cache stores raw Overpass JSON responses; it does not cache processed graphs or derived data.
+  - To force fresh downloads, clear the cache directory or disable caching for that run.
 
 ### Historical snapshots
 
 You can fix queries to a specific OSM snapshot using the Overpass `date` parameter.
 This allows retrieving map data as it existed at a given moment in time.
+
 ```python
+from iduedu import config
+
 # Specific day
 config.set_overpass_date(date="2020-01-01")
 
 # Or build from components
 config.set_overpass_date(year=2020)            # → 2020-01-01T00:00:00Z
 config.set_overpass_date(year=2020, month=5)   # → 2020-05-01T00:00:00Z
-```
-To reset and use the latest data again:
-```python
+
+
+# To reset and use the latest data again:
+
 config.set_overpass_date()  # or config.set_overpass_date(None)
 ```
 
@@ -151,7 +160,6 @@ config.set_overpass_date()  # or config.set_overpass_date(None)
 ## Roadmap / Ideas
 
 - More PT modes and GTFS import
-- Caching of Overpass responses
 - Richer edge attributes (e.g., elevation, turn costs)
 
 > Contributions and ideas are welcome! Please open an issue or PR.

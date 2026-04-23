@@ -44,7 +44,7 @@ def _fmt_top_sizes(sizes, top_k: int = 5) -> str:
     return "[" + ", ".join(map(str, ss[:top_k])) + ", …]"
 
 
-def keep_largest_strongly_connected_component(graph: nx.DiGraph, *, top_k_wcc_sizes: int = 5) -> nx.DiGraph:
+def keep_largest_strongly_connected_component(graph: nx.DiGraph) -> nx.DiGraph:
     """
     Keep only the largest strongly connected component of a directed graph.
 
@@ -53,7 +53,6 @@ def keep_largest_strongly_connected_component(graph: nx.DiGraph, *, top_k_wcc_si
 
     Parameters:
         graph (nx.DiGraph): Directed graph to prune (a copy is made).
-        top_k_wcc_sizes (int): How many largest WCC sizes to show in the warning.
 
     Returns:
         (nx.DiGraph): Graph restricted to the largest SCC.
@@ -62,29 +61,17 @@ def keep_largest_strongly_connected_component(graph: nx.DiGraph, *, top_k_wcc_si
         - Uses `nx.weakly_connected_components` for a quick disconnectedness summary.
         - Nodes from all SCCs except the largest are removed.
     """
-    graph = graph.copy()
 
-    weakly_connected_components = list(nx.weakly_connected_components(graph))
-    if len(weakly_connected_components) > 1:
-        sizes = [len(c) for c in weakly_connected_components]
-        logger.debug(
-            f"Graph contains {len(weakly_connected_components)} weakly connected components. "
-            f"This means the graph has disconnected groups if edge directions are ignored. "
-            f"Component sizes:: {_fmt_top_sizes(sizes, top_k=top_k_wcc_sizes)}"
-        )
+    largest_scc = max(nx.strongly_connected_components(graph), key=len)
+    if len(largest_scc) == graph.number_of_nodes():
+        return graph
 
-    all_scc = sorted(nx.strongly_connected_components(graph), key=len)
-    nodes_to_del = set().union(*all_scc[:-1])
-
-    if nodes_to_del:
-        logger.warning(
-            f"Removing {len(nodes_to_del)} nodes from {len(all_scc) - 1} smaller strongly connected components. "
-            f"These are subgraphs where nodes are internally reachable but isolated from the rest. "
-            f"Retaining only the largest strongly connected component ({len(all_scc[-1])} nodes)."
-        )
-        graph.remove_nodes_from(nodes_to_del)
-
-    return graph
+    removed = graph.number_of_nodes() - len(largest_scc)
+    logger.warning(
+        f"Removing {removed} nodes from smaller strongly connected components. "
+        f"Retaining only the largest strongly connected component ({len(largest_scc)} nodes)."
+    )
+    return graph.subgraph(largest_scc).copy()
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:

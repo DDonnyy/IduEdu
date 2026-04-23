@@ -95,13 +95,13 @@ def _build_edges_from_overpass(
     data = get_network_by_filters(polygon, way_filter)
     if len(data) == 0:
         return gpd.GeoDataFrame(), CRS.from_epsg(4326)
-    logger.info("Downloading network via Overpass done!")
+
     ways = data[data["type"] == "way"].copy()
 
-    # Собираем координаты каждой линии (lon, lat)
+    # Collecting the coordinates of each line (lon, lat)
     coords_list = [np.asarray([(p["lon"], p["lat"]) for p in pts], dtype="f8") for pts in ways["geometry"].values]
 
-    # сегментация на отрезки
+    # segmentation into segments
     starts = np.concatenate([a[:-1] for a in coords_list], axis=0)
     ends = np.concatenate([a[1:] for a in coords_list], axis=0)
 
@@ -112,7 +112,7 @@ def _build_edges_from_overpass(
     coords = np.stack([starts, ends], axis=1)
     geoms = linestrings(coords)
 
-    # локальная проекция
+    # local utm crs
     local_crs = estimate_crs_for_bounds(*polygon.bounds)
 
     edges = gpd.GeoDataFrame({"way_idx": way_idx}, geometry=geoms, crs=4326).to_crs(local_crs)
@@ -132,7 +132,7 @@ def _build_edges_from_overpass(
 
     existing_columns = [c for c in needed_tags if c in edges.columns]
     if simplify:
-        # сшиваем ребра и переносим атрибуты через midpoints -> nearest
+        # stitching edges and transferring attributes via midpoints -> nearest
         merged_lines = line_merge(MultiLineString(edges.geometry.to_list()), directed=True)
         list_of_merged = list(merged_lines.geoms) if merged_lines.geom_type == "MultiLineString" else [merged_lines]
 
@@ -221,7 +221,7 @@ def get_drive_graph(
 
     tags_to_retrieve = set(needed_tags) | {"oneway", "maxspeed", "highway"}
 
-    logger.info("Downloading drive network via Overpass ...")
+    logger.info("Retrieving drive network via Overpass...")
     edges, local_crs = _build_edges_from_overpass(
         polygon4326, road_filter, needed_tags=tags_to_retrieve, simplify=simplify
     )
@@ -234,7 +234,7 @@ def get_drive_graph(
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
         edges = edges.clip(clip_poly_gdf, keep_geom_type=True)
 
-    # двусторонние — дублируем с реверсом
+    # duplicate not oneway edges with reverse
     if "oneway" not in edges.columns:
         two_way = edges.copy()
     else:
@@ -382,6 +382,9 @@ def get_walk_graph(
 
     two_way = edges.copy()
     two_way.geometry = two_way.geometry.reverse()
+
+    # the order is necessary for the correct formation of the MultiEdge graph,
+    # so that there is no u-v-k on one side and v-u-k1 on the other, there should be u-v-k and v-u-k1
     edges["_ord"] = np.arange(len(edges)) * 2
     two_way["_ord"] = np.arange(len(two_way)) * 2 + 1
 
@@ -389,7 +392,7 @@ def get_walk_graph(
         pd.concat([edges, two_way], ignore_index=True).sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
     )
 
-    # u/v и узлы
+    # future nodes identification
     coords = edges.geometry.get_coordinates().to_numpy()
     counts = edges.geometry.count_coordinates()
     cuts = np.cumsum(counts)
@@ -410,7 +413,7 @@ def get_walk_graph(
     edges["time_min"] = (edges["length_meter"] / float(walk_speed)).round(3)
     edges["type"] = "walk"
 
-    # Сборка графа
+    # graph build
     graph = nx.MultiDiGraph()
     graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 

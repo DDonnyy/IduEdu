@@ -382,8 +382,9 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> l
         )
         json_root = resp.json()
         cache_save_async("routes", cache_key_src, json_root)
+        logger.info(f"Downloading routes via Overpass with types {public_transport_types} done!")
     else:
-        logger.debug("Using cached routes_by_poly result")
+        logger.info("Cache hit. Retrieving routes from local cache.")
 
     json_result = json_root.get("elements", [])
     return json_result
@@ -409,8 +410,10 @@ def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
         )
         json_root = resp.json()
         cache_save_async("network", cache_key_src, json_root)
+        logger.info("Network successfully downloaded!")
     else:
-        logger.debug(f"Using cached network.")
+        logger.info("Cache hit. Retrieving network from local cache.")
+
     json_result = json_root.get("elements", [])
     return pd.DataFrame(json_result)
 

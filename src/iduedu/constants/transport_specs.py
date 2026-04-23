@@ -207,3 +207,6 @@ DEFAULT_REGISTRY = TransportRegistry(
         "train": TransportSpec("train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97),
     }
 )
+
+# TODO
+DEFAULT_REGISTRY_W_TRAIN = DEFAULT_REGISTRY

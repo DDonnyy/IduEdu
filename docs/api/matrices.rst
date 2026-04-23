@@ -7,5 +7,5 @@ Matrices
     :toctree: generated
     :nosignatures:
 
-    get_adj_matrix_gdf_to_gdf
+    get_od_matrix_gdf_to_gdf
     get_closest_nodes

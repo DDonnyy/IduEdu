@@ -744,6 +744,9 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
 
         ways_df = members[(members["type"] == "way") & (members["role"].fillna("").isin(["", "forward", "backward"]))]
 
+        if len(ways_df) == 0:
+            continue
+
         lines = MultiLineString(
             [LineString([transformer.transform(p["lon"], p["lat"]) for p in pts]) for pts in ways_df["geometry"].values]
         )

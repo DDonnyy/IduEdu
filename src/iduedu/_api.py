@@ -16,5 +16,5 @@ from .modules.graph_transformers import (
     reproject_graph,
     write_gml,
 )
-from .modules.matrix.matrix_builder import get_adj_matrix_gdf_to_gdf, get_closest_nodes
+from .modules.matrix.matrix_builder import get_adj_matrix_gdf_to_gdf, get_closest_nodes, get_od_matrix_gdf_to_gdf
 from .modules.overpass.overpass_downloaders import get_4326_boundary

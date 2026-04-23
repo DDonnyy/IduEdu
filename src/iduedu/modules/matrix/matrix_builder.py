@@ -1,3 +1,4 @@
+import warnings
 from heapq import heappop, heappush
 from typing import Any, Iterable, Literal
 
@@ -111,7 +112,38 @@ def get_closest_nodes(gdf_from: gpd.GeoDataFrame, to_nx_graph: nx.Graph) -> tupl
     return nearest_nodes, distances
 
 
-def get_adj_matrix_gdf_to_gdf(
+def _check_nodes(graph) -> bool:
+    n = graph.number_of_nodes()
+    if n == 0:
+        return True
+    try:
+        it = iter(graph.nodes)
+        first = next(it)
+    except StopIteration:
+        return True
+
+    if not isinstance(first, int):
+        return False
+
+    mn = first
+    mx = first
+    cnt = 1
+
+    for v in it:
+        if not isinstance(v, int):
+            return False
+        if v < 0:
+            return False
+        if v < mn:
+            mn = v
+        elif v > mx:
+            mx = v
+        cnt += 1
+
+    return mn == 0 and mx == n - 1 and cnt == n
+
+
+def get_od_matrix_gdf_to_gdf(
     gdf_from: gpd.GeoDataFrame,
     gdf_to: gpd.GeoDataFrame,
     nx_graph: nx.Graph,
@@ -122,7 +154,7 @@ def get_adj_matrix_gdf_to_gdf(
     max_workers: int = None,
 ) -> pd.DataFrame:
     """
-    Compute a shortest-path matrix between two GeoDataFrames over a weighted NetworkX graph.
+    Compute an origin–destination (OD) shortest-path matrix between two GeoDataFrames over a weighted NetworkX graph.
 
     Each origin (row of `gdf_from`) and destination (column of `gdf_to`) is snapped to its nearest
     graph node (KD-tree), then distances are computed with a batched, Numba-parallel Dijkstra on
@@ -170,11 +202,16 @@ def get_adj_matrix_gdf_to_gdf(
         raise CRSError(f"Graph crs ({local_crs}) has invalid format.") from e
 
     nx_graph = keep_largest_strongly_connected_component(nx_graph)
-    nx_graph = nx.convert_node_labels_to_integers(nx_graph)
+
+    if not _check_nodes(nx_graph):
+        nx_graph = nx.convert_node_labels_to_integers(nx_graph)
+
     logger.debug("Preparing graph sparse matrix")
     transposed = False
 
-    if gdf_from.equals(gdf_to):
+    eq = gdf_from.equals(gdf_to)
+
+    if eq:
         closest_nodes_from, dist_from = get_closest_nodes(gdf_from, nx_graph)
         closest_nodes_to, dist_to = closest_nodes_from, dist_from
         sparse_row_scipy = _get_sparse_row(nx_graph, weight)
@@ -262,9 +299,37 @@ def _get_sparse_row(nx_graph, weight):
             nx_graph = nx.DiGraph(nx_graph)
         else:
             nx_graph = nx.Graph(nx_graph)
-    sparse_row_scipy = nx.to_scipy_sparse_array(nx_graph, weight=weight)
-    sparse_row_scipy.data = np.round(sparse_row_scipy.data * 100).astype(np.uint32)
-    return sparse_row_scipy
+    sp = nx.to_scipy_sparse_array(nx_graph, weight=weight)
+    sp.data = np.rint(sp.data * 100).astype(np.uint32, copy=False)
+    return sp
+
+
+def get_adj_matrix_gdf_to_gdf(
+    gdf_from: gpd.GeoDataFrame,
+    gdf_to: gpd.GeoDataFrame,
+    nx_graph: nx.Graph,
+    weight: Literal["length_meter", "time_min"] = "length_meter",
+    dtype: np.dtype = np.float16,
+    add_dist_tofrom_node: bool = True,
+    threshold: int | None = None,
+    max_workers: int | None = None,
+) -> pd.DataFrame:
+    warnings.warn(
+        "get_adj_matrix_gdf_to_gdf() is deprecated and will be removed in the next release. "
+        "Use get_od_matrix_gdf_to_gdf() instead.",
+        FutureWarning,
+        stacklevel=2,
+    )
+    return get_od_matrix_gdf_to_gdf(
+        gdf_from=gdf_from,
+        gdf_to=gdf_to,
+        nx_graph=nx_graph,
+        weight=weight,
+        dtype=dtype,
+        add_dist_tofrom_node=add_dist_tofrom_node,
+        threshold=threshold,
+        max_workers=max_workers,
+    )
 
 
 def _get_numba_matrix_attr(sparse_row_scipy):
