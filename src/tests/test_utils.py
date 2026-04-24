@@ -10,7 +10,7 @@ from iduedu import (
     clip_nx_graph,
     gdf_to_graph,
     graph_to_gdf,
-    keep_largest_strongly_connected_component,
+    keep_largest_connected_component,
     read_gml,
     reproject_graph,
     write_gml,
@@ -43,7 +43,7 @@ def test_keep_largest_scc():
     G = nx.DiGraph()
     G.add_edges_from([(1, 2), (2, 3), (3, 1)])
     G.add_edges_from([(10, 11), (11, 10)])
-    pruned = keep_largest_strongly_connected_component(G)
+    pruned = keep_largest_connected_component(G)
     assert set(pruned.nodes()) == {1, 2, 3}
     assert pruned.is_directed()
 

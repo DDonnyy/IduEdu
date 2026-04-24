@@ -44,34 +44,49 @@ def _fmt_top_sizes(sizes, top_k: int = 5) -> str:
     return "[" + ", ".join(map(str, ss[:top_k])) + ", …]"
 
 
-def keep_largest_strongly_connected_component(graph: nx.DiGraph) -> nx.DiGraph:
+def keep_largest_connected_component(graph: nx.Graph, copy: bool = True) -> nx.Graph:
     """
-    Keep only the largest strongly connected component of a directed graph.
+    Keep only the largest connected component of a NetworkX graph.
 
-    Logs the sizes of weakly connected components (WCC) for visibility, then removes all
-    nodes outside the largest strongly connected component (SCC) and returns the pruned copy.
+    For directed graphs, uses weak connectivity.
+    For undirected graphs, uses ordinary connectivity.
 
     Parameters:
         graph (nx.DiGraph): Directed graph to prune (a copy is made).
-
+        copy (bool):
+            If True, returns an independent graph copy. If False, returns a graph view.
     Returns:
-        (nx.DiGraph): Graph restricted to the largest SCC.
+        (nx.Graph): Graph restricted to the largest connected component.
 
     Notes:
         - Uses `nx.weakly_connected_components` for a quick disconnectedness summary.
         - Nodes from all SCCs except the largest are removed.
     """
 
-    largest_scc = max(nx.strongly_connected_components(graph), key=len)
-    if len(largest_scc) == graph.number_of_nodes():
-        return graph
+    if graph.number_of_nodes() == 0:
+        return graph.copy() if copy else graph
 
-    removed = graph.number_of_nodes() - len(largest_scc)
+    if graph.is_directed():
+        components = nx.weakly_connected_components(graph)
+        component_name = "weakly connected"
+    else:
+        components = nx.connected_components(graph)
+        component_name = "connected"
+
+    largest_component = max(components, key=len)
+
+    if len(largest_component) == graph.number_of_nodes():
+        return graph.copy() if copy else graph
+
+    removed = graph.number_of_nodes() - len(largest_component)
+
     logger.warning(
-        f"Removing {removed} nodes from smaller strongly connected components. "
-        f"Retaining only the largest strongly connected component ({len(largest_scc)} nodes)."
+        f"Removing {removed} nodes outside the largest {component_name} component. "
+        f"Retaining {len(largest_component)} of {graph.number_of_nodes()} nodes."
     )
-    return graph.subgraph(largest_scc).copy()
+
+    subgraph = graph.subgraph(largest_component)
+    return subgraph.copy() if copy else subgraph
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:

@@ -11,7 +11,7 @@ from .modules.graph_transformers import (
     clip_nx_graph,
     gdf_to_graph,
     graph_to_gdf,
-    keep_largest_strongly_connected_component,
+    keep_largest_connected_component,
     read_gml,
     reproject_graph,
     write_gml,

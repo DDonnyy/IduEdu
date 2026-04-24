@@ -10,7 +10,7 @@ from shapely.ops import substring
 from iduedu import config
 from iduedu.modules.graph_builders.drive_walk_builders import get_walk_graph
 from iduedu.modules.graph_builders.public_transport_builders import get_public_transport_graph
-from iduedu.modules.graph_transformers import keep_largest_strongly_connected_component
+from iduedu.modules.graph_transformers import keep_largest_connected_component
 from iduedu.modules.overpass.overpass_downloaders import get_4326_boundary
 
 logger = config.logger
@@ -18,8 +18,8 @@ logger = config.logger
 
 # TODO перевести комментари, добавить новые
 def join_pt_walk_graph(
-    public_transport_g: nx.Graph,
-    walk_g: nx.Graph,
+    public_transport_g: nx.MultiDiGraph,
+    walk_g: nx.MultiGraph,
     max_dist=20,
     keep_largest_subgraph: bool = True,
 ) -> nx.Graph:
@@ -35,10 +35,10 @@ def join_pt_walk_graph(
     the largest strongly connected component.
 
     Parameters:
-        public_transport_g (nx.Graph): PT graph with node attributes `x`, `y`, `type`, `route`
+        public_transport_g (nx.MultiDiGraph): PT graph with node attributes `x`, `y`, `type`, `route`
             and a graph CRS in `graph["crs"]`. Platform-like nodes are those with
             `type in {"platform","subway_entry_exit","subway_entry","subway_exit"}`.
-        walk_g (nx.Graph): Pedestrian graph in the **same** CRS with edge `geometry` and graph
+        walk_g (nx.MultiGraph): Pedestrian graph in the **same** CRS with edge `geometry` and graph
             attribute `graph["walk_speed"]` (meters/min). If `walk_speed` is missing, a default
             of 83.33 m/min is used.
         max_dist (float): Max search radius in meters to snap platforms to walk edges.
@@ -330,7 +330,7 @@ def join_pt_walk_graph(
     logger.debug("Composing graphs")
     intermodal = nx.compose(nx.MultiDiGraph(transport), nx.MultiDiGraph(walk))
     if keep_largest_subgraph:
-        intermodal = keep_largest_strongly_connected_component(intermodal)
+        intermodal = keep_largest_connected_component(intermodal)
     intermodal.remove_nodes_from([node for node, data in intermodal.nodes(data=True) if "x" not in data.keys()])
     mapping = {old_label: new_label for new_label, old_label in enumerate(intermodal.nodes())}
     logger.debug("Relabeling")

@@ -12,7 +12,7 @@ from pyproj.exceptions import CRSError
 from scipy.spatial import KDTree
 
 from iduedu import config
-from iduedu.modules.graph_transformers import keep_largest_strongly_connected_component
+from iduedu.modules.graph_transformers import keep_largest_connected_component
 from iduedu.modules.matrix.numba_csr_matrix import UI32CSRMatrix
 
 logger = config.logger
@@ -201,7 +201,7 @@ def get_od_matrix_gdf_to_gdf(
     except CRSError as e:
         raise CRSError(f"Graph crs ({local_crs}) has invalid format.") from e
 
-    nx_graph = keep_largest_strongly_connected_component(nx_graph)
+    nx_graph = keep_largest_connected_component(nx_graph)
 
     if not _check_nodes(nx_graph):
         nx_graph = nx.convert_node_labels_to_integers(nx_graph)

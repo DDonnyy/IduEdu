@@ -12,7 +12,7 @@ from shapely.geometry.multipolygon import MultiPolygon
 from iduedu import config
 from iduedu.constants.highway_enums import HighwayType
 from iduedu.constants.network_enums import Network
-from iduedu.modules.graph_transformers import estimate_crs_for_bounds, keep_largest_strongly_connected_component
+from iduedu.modules.graph_transformers import estimate_crs_for_bounds, keep_largest_connected_component
 from iduedu.modules.overpass.overpass_downloaders import get_4326_boundary, get_network_by_filters
 
 logger = config.logger
@@ -286,7 +286,7 @@ def get_drive_graph(
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
     if keep_largest_subgraph:
-        graph = keep_largest_strongly_connected_component(graph)
+        graph = keep_largest_connected_component(graph)
 
     mapping = {old: new for new, old in enumerate(graph.nodes())}
     graph = nx.relabel_nodes(graph, mapping)
@@ -308,7 +308,7 @@ def get_walk_graph(
     custom_filter: str | None = None,
     osm_edge_tags: list[str] | None = None,  # overrides default tags
     keep_edge_geometry: bool = True,
-) -> nx.MultiDiGraph:
+) -> nx.MultiGraph:
     """
     Build a pedestrian network (nx.MultiDiGraph) from OpenStreetMap within a given territory.
 
@@ -334,7 +334,7 @@ def get_walk_graph(
         keep_edge_geometry (bool): If True, stores shapely `geometry` on edges in the local projected CRS.
 
     Returns:
-        (nx.MultiDiGraph): Directed multigraph of the walking network. Each edge carries:
+        (nx.MultiGraph): Multigraph of the walking network. Each edge carries:
             - `geometry` (if `keep_edge_geometry=True`), local CRS,
             - `length_meter` (float), `time_min` (float),
             - `type="walk"`,
@@ -374,23 +374,11 @@ def get_walk_graph(
 
     if len(edges) == 0:
         logger.warning("No edges found, returning empty graph")
-        return nx.MultiDiGraph()
+        return nx.MultiGraph()
 
     if clip_by_territory:
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
         edges = edges.clip(clip_poly_gdf, keep_geom_type=True).explode(ignore_index=True)
-
-    two_way = edges.copy()
-    two_way.geometry = two_way.geometry.reverse()
-
-    # the order is necessary for the correct formation of the MultiEdge graph,
-    # so that there is no u-v-k on one side and v-u-k1 on the other, there should be u-v-k and v-u-k1
-    edges["_ord"] = np.arange(len(edges)) * 2
-    two_way["_ord"] = np.arange(len(two_way)) * 2 + 1
-
-    edges = (
-        pd.concat([edges, two_way], ignore_index=True).sort_values("_ord").drop(columns="_ord").reset_index(drop=True)
-    )
 
     # future nodes identification
     coords = edges.geometry.get_coordinates().to_numpy()
@@ -414,7 +402,7 @@ def get_walk_graph(
     edges["type"] = "walk"
 
     # graph build
-    graph = nx.MultiDiGraph()
+    graph = nx.MultiGraph()
     graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 
     edge_attrs = set(needed_tags)
@@ -427,7 +415,7 @@ def get_walk_graph(
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
     if keep_largest_subgraph:
-        graph = keep_largest_strongly_connected_component(graph)
+        graph = keep_largest_connected_component(graph)
 
     mapping = {old: new for new, old in enumerate(graph.nodes())}
     graph = nx.relabel_nodes(graph, mapping)
