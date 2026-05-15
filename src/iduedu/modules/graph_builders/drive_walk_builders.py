@@ -211,6 +211,7 @@ def get_drive_graph(
         road_filter = filters[network_type]
     except KeyError:
         raise ValueError(f"Unknown road_type: {network_type!r}")
+
     if network_type == "custom" and road_filter is None:
         raise ValueError("For road_type='custom' you must provide custom_filter")
 
@@ -228,35 +229,41 @@ def get_drive_graph(
 
     if len(edges) == 0:
         logger.warning("No edges found, returning empty graph")
-        return nx.MultiDiGraph()
+        graph = nx.MultiGraph()
+        graph.graph["crs"] = local_crs
+        graph.graph["type"] = network_type
+        return graph
 
     if clip_by_territory:
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
-        edges = edges.clip(clip_poly_gdf, keep_geom_type=True)
+        edges = edges.clip(clip_poly_gdf, keep_geom_type=True).reset_index(drop=True)
 
-    # duplicate not oneway edges with reverse
-    if "oneway" not in edges.columns:
-        two_way = edges.copy()
+    if "oneway" in edges.columns:
+        oneway_norm = edges["oneway"].astype(str).str.lower().str.strip()
+        edges["single_direction"] = oneway_norm.isin({"yes", "true", "1"})
     else:
-        two_way = edges[edges["oneway"] != "yes"].copy()
-    two_way.geometry = two_way.geometry.reverse()
-    edges = pd.concat([edges, two_way], ignore_index=True)
+        edges["oneway"] = None
+        edges["single_direction"] = False
 
     coords = edges.geometry.get_coordinates().to_numpy()
     counts = edges.geometry.count_coordinates()
     cuts = np.cumsum(counts)
     first_idx = np.r_[0, cuts[:-1]]
     last_idx = cuts - 1
+
     starts = coords[first_idx]
     ends = coords[last_idx]
+
     edges["start"] = list(map(tuple, starts))
     edges["end"] = list(map(tuple, ends))
 
     all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
     labels, uniques = pd.factorize(all_endpoints)
+
     n = len(edges)
     u = labels[:n]
     v = labels[n:]
+
     edges["u"] = u
     edges["v"] = v
 
@@ -272,17 +279,21 @@ def get_drive_graph(
     edges["time_min"] = (edges["length_meter"] / edges["speed_mpm"]).round(3)
     edges["type"] = "drive"
 
-    graph = nx.MultiDiGraph()
+    graph = nx.MultiGraph()
 
     graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
 
     if add_road_category:
         needed_tags |= {"category"}
+
     if keep_edge_geometry:
         needed_tags |= {"geometry"}
-    needed_tags |= {"length_meter", "time_min", "type"}
-    edge_attr_cols = list(tag for tag in needed_tags if tag in edges.columns)
+
+    needed_tags |= {"length_meter", "time_min", "type", "oneway", "single_direction"}
+
+    edge_attr_cols = [tag for tag in needed_tags if tag in edges.columns]
     attrs_iter = edges[edge_attr_cols].to_dict("records")
+
     graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
 
     if keep_largest_subgraph:
@@ -290,8 +301,10 @@ def get_drive_graph(
 
     mapping = {old: new for new, old in enumerate(graph.nodes())}
     graph = nx.relabel_nodes(graph, mapping)
+
     graph.graph["crs"] = local_crs
     graph.graph["type"] = network_type
+
     logger.debug("Drive graph built.")
     return graph
 
