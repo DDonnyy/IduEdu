@@ -5,14 +5,14 @@ from itertools import chain, combinations
 
 import numpy as np
 import pandas as pd
-from pyproj import CRS, Transformer
+from overpass.overpass_downloaders import fetch_member_tags
+from pyproj import Transformer
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from shapely import LineString, MultiLineString, Point, line_merge
 from shapely.ops import substring
 
 from iduedu.constants.highway_enums import HighwayType
-from iduedu.modules.overpass.overpass_downloaders import fetch_member_tags
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]

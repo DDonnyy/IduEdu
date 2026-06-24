@@ -7,13 +7,13 @@ import networkx as nx
 import numba as nb
 import numpy as np
 import pandas as pd
+from matrix.numba_csr_matrix import UI32CSRMatrix
 from pyproj import CRS
 from pyproj.exceptions import CRSError
 from scipy.spatial import KDTree
 
 from iduedu import config
 from iduedu.modules.graph_transformers import keep_largest_connected_component
-from iduedu.modules.matrix.numba_csr_matrix import UI32CSRMatrix
 
 logger = config.logger
 

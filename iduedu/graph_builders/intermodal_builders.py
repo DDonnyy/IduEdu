@@ -4,14 +4,14 @@ from typing import Any
 import geopandas as gpd
 import networkx as nx
 import pandas as pd
+from graph_builders.drive_walk_builders import get_walk_graph
+from graph_builders.public_transport_builders import get_public_transport_graph
+from overpass.overpass_downloaders import get_4326_boundary
 from shapely import LineString, MultiPolygon, Polygon
 from shapely.ops import substring
 
 from iduedu import config
-from iduedu.modules.graph_builders.drive_walk_builders import get_walk_graph
-from iduedu.modules.graph_builders.public_transport_builders import get_public_transport_graph
 from iduedu.modules.graph_transformers import keep_largest_connected_component
-from iduedu.modules.overpass.overpass_downloaders import get_4326_boundary
 
 logger = config.logger
 

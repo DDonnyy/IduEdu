@@ -4,6 +4,15 @@ import geopandas as gpd
 import networkx as nx
 import numpy as np
 import pandas as pd
+from overpass.overpass_downloaders import (
+    get_4326_boundary,
+    get_routes_by_poly,
+)
+from overpass.overpass_parsers import (
+    overpass_ground_transport2edgenode,
+    overpass_routes_to_df,
+    overpass_subway2edgenode,
+)
 from shapely import MultiPolygon, Polygon
 from tqdm.auto import tqdm
 from tqdm.contrib.concurrent import process_map
@@ -11,15 +20,6 @@ from tqdm.contrib.concurrent import process_map
 from iduedu import config
 from iduedu.constants.transport_specs import DEFAULT_REGISTRY, TransportRegistry
 from iduedu.modules.graph_transformers import clip_nx_graph, estimate_crs_for_bounds
-from iduedu.modules.overpass.overpass_downloaders import (
-    get_4326_boundary,
-    get_routes_by_poly,
-)
-from iduedu.modules.overpass.overpass_parsers import (
-    overpass_ground_transport2edgenode,
-    overpass_routes_to_df,
-    overpass_subway2edgenode,
-)
 
 logger = config.logger
 

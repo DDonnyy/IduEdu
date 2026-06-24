@@ -3,7 +3,7 @@
 import pytest
 from loguru import logger
 
-from iduedu._config import Config
+from iduedu.config import Config
 
 # ---------- fixtures ----------
 

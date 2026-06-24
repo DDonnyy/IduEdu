@@ -1,0 +1,59 @@
+import numba as nb
+import numpy as np
+
+
+@nb.experimental.jitclass(
+    [
+        ("values", nb.uint32[:]),
+        ("col_index", nb.uint32[:]),
+        ("row_index", nb.uint32[:]),
+        ("tot_rows", nb.uint32),
+    ]
+)
+class UI32CSRMatrix:
+    def __init__(self, values, col_index, row_index):
+        self.values = values
+        self.col_index = col_index
+        self.row_index = row_index
+        self.tot_rows = len(row_index) - 1
+
+    def get_cols(self, row):
+        start = self.row_index[row]
+        end = self.row_index[row + 1]
+        return self.col_index[start:end]
+
+    def get_vals(self, row):
+        start = self.row_index[row]
+        end = self.row_index[row + 1]
+        return self.values[start:end]
+
+
+try:
+    ui32csr_type = UI32CSRMatrix.class_type.instance_type
+except Exception:
+    ui32csr_type = None
+
+
+def sparse_row2numba_matrix(sparse_row_scipy):
+    values = sparse_row_scipy.data.astype(np.uint32, copy=False)
+    col_index = sparse_row_scipy.indices.astype(np.uint32, copy=False)
+    row_index = sparse_row_scipy.indptr.astype(np.uint32, copy=False)
+    return UI32CSRMatrix(values, col_index, row_index)
+
+
+def coo_rows_to_arrays(coo_rows: list) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    nnz = sum(len(row) for row in coo_rows)
+
+    rows = np.empty(nnz, dtype=np.int32)
+    cols = np.empty(nnz, dtype=np.int32)
+    values = np.empty(nnz, dtype=np.int32)
+
+    pos = 0
+    for row_i, row in enumerate(coo_rows):
+        for col_i, distance in row:
+            rows[pos] = row_i
+            cols[pos] = col_i
+            values[pos] = distance
+            pos += 1
+
+    return rows, cols, values
