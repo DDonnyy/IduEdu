@@ -1,21 +1,56 @@
 from typing import Literal
 
 import geopandas as gpd
-import networkx as nx
 import numpy as np
 import pandas as pd
-from geopandas import GeoDataFrame
-from overpass.overpass_downloaders import get_4326_boundary, get_network_by_filters
 from pyproj import CRS
-from shapely import MultiLineString, Polygon, line_merge, linestrings
+from shapely import LineString, MultiLineString, Polygon, line_merge, linestrings
 from shapely.geometry.multipolygon import MultiPolygon
 
 from iduedu import config
 from iduedu.constants.highway_enums import HighwayType
 from iduedu.constants.network_enums import Network
-from iduedu.modules.graph_transformers import estimate_crs_for_bounds, keep_largest_connected_component
+from iduedu.graph.graph_transformers import estimate_crs_for_bounds
+from iduedu.graph.urban_graph import UrbanGraph
+from iduedu.overpass.overpass_downloaders import get_4326_boundary, get_network_by_filters
 
 logger = config.logger
+
+
+def _assign_edge_keys(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    edges = edges.copy()
+    edges["k"] = edges.groupby(["u", "v"], sort=False).cumcount()
+    return edges
+
+
+def _build_nodes_and_uv(edges: gpd.GeoDataFrame, crs: CRS) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    coords = edges.geometry.get_coordinates().to_numpy()
+    counts = edges.geometry.count_coordinates()
+    cuts = np.cumsum(counts)
+    first_idx = np.r_[0, cuts[:-1]]
+    last_idx = cuts - 1
+
+    starts = coords[first_idx]
+    ends = coords[last_idx]
+
+    edges = edges.copy()
+    edges["start"] = list(map(tuple, starts))
+    edges["end"] = list(map(tuple, ends))
+
+    all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
+    labels, uniques = pd.factorize(all_endpoints)
+    n_edges = len(edges)
+    edges["u"] = labels[:n_edges].astype(int)
+    edges["v"] = labels[n_edges:].astype(int)
+
+    if len(pd.Index(uniques)) == 0:
+        return gpd.GeoDataFrame(geometry=[]), gpd.GeoDataFrame(geometry=[])
+    coords = np.asarray(list(pd.Index(uniques)), dtype=float)
+    nodes = gpd.GeoDataFrame(
+        index=pd.RangeIndex(len(coords)), geometry=gpd.points_from_xy(coords[:, 0], coords[:, 1]), crs=crs
+    )
+
+    return nodes, edges
 
 
 def _get_highway_properties(highway) -> tuple[str, float]:
@@ -66,8 +101,9 @@ def _build_edges_from_overpass(
     polygon: Polygon,
     way_filter: str,
     needed_tags: set[str],
+    local_crs: CRS,
     simplify: bool = True,
-) -> tuple[GeoDataFrame, CRS]:
+) -> gpd.GeoDataFrame:
     """
     Download OSM ways by filter, segment into edges, and project to a local CRS.
 
@@ -83,10 +119,8 @@ def _build_edges_from_overpass(
             using a nearest midpoint join.
 
     Returns:
-        (tuple[gpd.GeoDataFrame, CRS]): A pair `(edges, local_crs)` where:
-            - `edges` (GeoDataFrame): Line features in local CRS with columns:
-                `geometry` (LineString), `way_idx` (source way index), `id` (OSM way id), `tags` (dict).
-            - `local_crs` (pyproj.CRS): Estimated local projected CRS suitable for metric length computations.
+        GeoDataFrame: Line features in local CRS with columns:
+            `geometry` (LineString), `way_idx` (source way index), `id` (OSM way id), `tags` (dict).
 
     Notes:
         Attributes on merged edges are inferred from the nearest original segment around the midpoint,
@@ -94,12 +128,21 @@ def _build_edges_from_overpass(
     """
     data = get_network_by_filters(polygon, way_filter)
     if len(data) == 0:
-        return gpd.GeoDataFrame(), CRS.from_epsg(4326)
+        return gpd.GeoDataFrame()
 
     ways = data[data["type"] == "way"].copy()
+    if len(ways) == 0:
+        return gpd.GeoDataFrame()
 
     # Collecting the coordinates of each line (lon, lat)
-    coords_list = [np.asarray([(p["lon"], p["lat"]) for p in pts], dtype="f8") for pts in ways["geometry"].values]
+    coord_entries = [
+        (idx, np.asarray([(p["lon"], p["lat"]) for p in pts], dtype="f8"))
+        for idx, pts in ways["geometry"].items()
+        if len(pts) >= 2
+    ]
+    if not coord_entries:
+        return gpd.GeoDataFrame()
+    way_indices, coords_list = zip(*coord_entries)
 
     # segmentation into segments
     starts = np.concatenate([a[:-1] for a in coords_list], axis=0)
@@ -107,13 +150,10 @@ def _build_edges_from_overpass(
 
     lengths = np.array([a.shape[0] for a in coords_list], dtype=int)
     seg_counts = np.maximum(lengths - 1, 0)
-    way_idx = np.repeat(ways.index.values, seg_counts)
+    way_idx = np.repeat(np.asarray(way_indices), seg_counts)
 
     coords = np.stack([starts, ends], axis=1)
     geoms = linestrings(coords)
-
-    # local utm crs
-    local_crs = estimate_crs_for_bounds(*polygon.bounds)
 
     edges = gpd.GeoDataFrame({"way_idx": way_idx}, geometry=geoms, crs=4326).to_crs(local_crs)
 
@@ -146,7 +186,7 @@ def _build_edges_from_overpass(
         lines = lines.join(joined[existing_columns])
         edges = lines
 
-    return edges, local_crs
+    return edges
 
 
 def get_drive_graph(
@@ -160,15 +200,14 @@ def get_drive_graph(
     network_type: Literal["drive", "drive_service", "custom"] = "drive",
     custom_filter: str | None = None,
     osm_edge_tags: list[str] | None = None,  # overrides default tags
-    keep_edge_geometry: bool = True,
-) -> nx.MultiDiGraph:
+) -> UrbanGraph:
     """
-    Build a drivable road network (nx.MultiDiGraph) from OpenStreetMap within a given territory.
+    Build a drivable UrbanGraph from OpenStreetMap within a given territory.
 
     The function downloads OSM ways via Overpass, segments them into directed edges, optionally merges
-    contiguous segments, duplicates two-way streets in reverse, and computes per-edge length (meters)
-    and travel time (minutes). Node coordinates are unique line endpoints in a local projected CRS.
-    Edge attributes can include selected OSM tags and a derived road category/speed.
+    contiguous segments, normalizes OSM one-way semantics into a bool `oneway` edge column, and computes
+    per-edge length (meters) and travel time (minutes). Node coordinates are unique line endpoints in a
+    local projected CRS. Edge attributes can include selected OSM tags and a derived road category/speed.
 
     Parameters:
         osm_id (int | None): OSM relation/area ID of the territory boundary. Provide this or `territory`.
@@ -186,16 +225,14 @@ def get_drive_graph(
             `network_type="custom"`.
         osm_edge_tags (list[str] | None): Which OSM tags to retain on edges. Overrides defaults from config.
             The tags `oneway`, `maxspeed`, and `highway` are always added.
-        keep_edge_geometry (bool): If True, stores shapely geometries on edges (`geometry` attribute).
-
     Returns:
-        (nx.MultiDiGraph): Directed multigraph of the road network. Each edge carries:
-            - `geometry` (if `keep_edge_geometry=True`) in local CRS,
+        UrbanGraph: Directed multigraph of the road network. Each edge carries:
+            - `geometry` in local CRS,
             - `length_meter` (float), `time_min` (float),
             - `type="drive"`,
             - selected OSM tags (incl. `highway`, `maxspeed`, `oneway`, optional `category`, etc.).
 
-            Graph-level attributes: `graph["crs"]` (local projected CRS), `graph["type"]` (network_type).
+            Graph-level attributes: `crs` (local projected CRS), `type` (network_type).
 
     Raises:
         ValueError: If `network_type` is unknown, or `network_type="custom"` without `custom_filter`.
@@ -222,91 +259,96 @@ def get_drive_graph(
 
     tags_to_retrieve = set(needed_tags) | {"oneway", "maxspeed", "highway"}
 
+    local_crs = estimate_crs_for_bounds(*polygon4326.bounds)
+
     logger.info("Retrieving drive network via Overpass...")
-    edges, local_crs = _build_edges_from_overpass(
-        polygon4326, road_filter, needed_tags=tags_to_retrieve, simplify=simplify
+    edges_gdf = _build_edges_from_overpass(
+        polygon4326, road_filter, needed_tags=tags_to_retrieve, local_crs=local_crs, simplify=simplify
     )
 
-    if len(edges) == 0:
+    if len(edges_gdf) == 0:
         logger.warning("No edges found, returning empty graph")
-        graph = nx.MultiGraph()
-        graph.graph["crs"] = local_crs
-        graph.graph["type"] = network_type
-        return graph
+        return UrbanGraph.empty(
+            crs=local_crs,
+            is_multigraph=True,
+            is_directed=True,
+            edge_direction_column="oneway",
+            graph_type=network_type,
+        )
 
     if clip_by_territory:
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
-        edges = edges.clip(clip_poly_gdf, keep_geom_type=True).reset_index(drop=True)
+        edges_gdf = edges_gdf.clip(clip_poly_gdf, keep_geom_type=True).reset_index(drop=True)
+        if len(edges_gdf) == 0:
+            logger.warning("No edges left after clipping, returning empty graph")
+            return UrbanGraph.empty(
+                crs=local_crs,
+                is_multigraph=True,
+                is_directed=True,
+                edge_direction_column="oneway",
+                graph_type=network_type,
+            )
 
-    if "oneway" in edges.columns:
-        oneway_norm = edges["oneway"].astype(str).str.lower().str.strip()
-        edges["single_direction"] = oneway_norm.isin({"yes", "true", "1"})
+    if "oneway" not in edges_gdf.columns:
+        edges_gdf["oneway"] = "no"
+
+    edges_gdf["oneway"] = edges_gdf["oneway"].fillna("no")
+    oneway_norm = edges_gdf["oneway"].astype(str).str.lower().str.strip()
+    reverse_mask = oneway_norm.eq("-1")
+    if reverse_mask.any():
+        edges_gdf.loc[reverse_mask, "geometry"] = edges_gdf.loc[reverse_mask, "geometry"].apply(
+            lambda geom: LineString(list(geom.coords)[::-1])
+        )
+    edges_gdf["oneway"] = oneway_norm.isin({"yes", "true", "1", "-1"})
+
+    nodes_gdf, edges_gdf = _build_nodes_and_uv(edges_gdf, local_crs)
+
+    if "highway" not in edges_gdf.columns:
+        edges_gdf["highway"] = None
+    edges_gdf[["category", "maxspeed_mpm"]] = edges_gdf["highway"].apply(
+        lambda h: pd.Series(_get_highway_properties(h))
+    )
+
+    if "maxspeed" in edges_gdf.columns:
+        maxspeed_osm_mpm = (pd.to_numeric(edges_gdf["maxspeed"], errors="coerce") * 1000.0 / 60.0).round(3)
+        edges_gdf["speed_mpm"] = maxspeed_osm_mpm.fillna(edges_gdf["maxspeed_mpm"])
     else:
-        edges["oneway"] = None
-        edges["single_direction"] = False
+        edges_gdf["speed_mpm"] = edges_gdf["maxspeed_mpm"]
 
-    coords = edges.geometry.get_coordinates().to_numpy()
-    counts = edges.geometry.count_coordinates()
-    cuts = np.cumsum(counts)
-    first_idx = np.r_[0, cuts[:-1]]
-    last_idx = cuts - 1
+    edges_gdf["length_meter"] = edges_gdf.geometry.length.round(3)
+    edges_gdf["time_min"] = (edges_gdf["length_meter"] / edges_gdf["speed_mpm"]).round(3)
+    edges_gdf["type"] = "drive"
 
-    starts = coords[first_idx]
-    ends = coords[last_idx]
+    edges_gdf = _assign_edge_keys(edges_gdf)
 
-    edges["start"] = list(map(tuple, starts))
-    edges["end"] = list(map(tuple, ends))
-
-    all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
-    labels, uniques = pd.factorize(all_endpoints)
-
-    n = len(edges)
-    u = labels[:n]
-    v = labels[n:]
-
-    edges["u"] = u
-    edges["v"] = v
-
-    edges[["category", "maxspeed_mpm"]] = edges["highway"].apply(lambda h: pd.Series(_get_highway_properties(h)))
-
-    if "maxspeed" in edges.columns:
-        maxspeed_osm_mpm = (pd.to_numeric(edges["maxspeed"], errors="coerce") * 1000.0 / 60.0).round(3)
-        edges["speed_mpm"] = maxspeed_osm_mpm.fillna(edges["maxspeed_mpm"])
-    else:
-        edges["speed_mpm"] = edges["maxspeed_mpm"]
-
-    edges["length_meter"] = edges.geometry.length.round(3)
-    edges["time_min"] = (edges["length_meter"] / edges["speed_mpm"]).round(3)
-    edges["type"] = "drive"
-
-    graph = nx.MultiGraph()
-
-    graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
-
+    edge_attr_cols = set(needed_tags) | {
+        "u",
+        "v",
+        "k",
+        "geometry",
+        "length_meter",
+        "time_min",
+        "type",
+        "oneway",
+    }
     if add_road_category:
-        needed_tags |= {"category"}
+        edge_attr_cols.add("category")
+    edges_gdf = edges_gdf[[col for col in edges_gdf.columns if col in edge_attr_cols]].copy()
 
-    if keep_edge_geometry:
-        needed_tags |= {"geometry"}
-
-    needed_tags |= {"length_meter", "time_min", "type", "oneway", "single_direction"}
-
-    edge_attr_cols = [tag for tag in needed_tags if tag in edges.columns]
-    attrs_iter = edges[edge_attr_cols].to_dict("records")
-
-    graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
-
-    if keep_largest_subgraph:
-        graph = keep_largest_connected_component(graph)
-
-    mapping = {old: new for new, old in enumerate(graph.nodes())}
-    graph = nx.relabel_nodes(graph, mapping)
-
-    graph.graph["crs"] = local_crs
-    graph.graph["type"] = network_type
+    # TODO: restore largest-component filtering after UrbanGraph component utilities are implemented.
+    # if keep_largest_subgraph:
+    #     graph = keep_largest_connected_component(graph)
 
     logger.debug("Drive graph built.")
-    return graph
+    return UrbanGraph(
+        nodes_gdf=nodes_gdf,
+        edges_gdf=edges_gdf,
+        is_multigraph=True,
+        is_directed=True,
+        edge_direction_column="oneway",
+        crs=local_crs,
+        graph_type=network_type,
+    )
 
 
 def get_walk_graph(
@@ -320,15 +362,13 @@ def get_walk_graph(
     network_type: Literal["walk", "custom"] = "walk",
     custom_filter: str | None = None,
     osm_edge_tags: list[str] | None = None,  # overrides default tags
-    keep_edge_geometry: bool = True,
-) -> nx.MultiGraph:
+) -> UrbanGraph:
     """
-    Build a pedestrian network (nx.MultiDiGraph) from OpenStreetMap within a given territory.
+    Build a pedestrian UrbanGraph from OpenStreetMap within a given territory.
 
-    The function fetches OSM ways via Overpass using a walking filter, splits each way into directed
-    line segments, duplicates all segments in reverse, and computes per-edge length (meters) and traversal time
-    (minutes) using a given walking speed (m/min). Node coordinates are unique segment endpoints in a local
-    projected CRS. Selected OSM tags can be attached to edges.
+    The function fetches OSM ways via Overpass using a walking filter, splits each way into line segments,
+    and computes per-edge length (meters) and traversal time (minutes) using a given walking speed (m/min).
+    The graph is stored as an undirected multigraph because pedestrian movement is treated as bidirectional.
 
     Parameters:
         osm_id (int | None): OSM relation/area ID for the boundary. Provide this or `territory`.
@@ -344,25 +384,22 @@ def get_walk_graph(
         custom_filter (str | None): Custom Overpass filter string used when `network_type="custom"`.
         osm_edge_tags (list[str] | None): List of OSM edge tags to retain (overrides defaults). Only these keys
             are joined from element tags.
-        keep_edge_geometry (bool): If True, stores shapely `geometry` on edges in the local projected CRS.
 
     Returns:
-        (nx.MultiGraph): Multigraph of the walking network. Each edge carries:
-            - `geometry` (if `keep_edge_geometry=True`), local CRS,
+        UrbanGraph: Undirected multigraph of the walking network. Each edge carries:
+            - `geometry` in local CRS,
             - `length_meter` (float), `time_min` (float),
             - `type="walk"`,
             - selected OSM tags (as requested).
 
-            Graph attributes include: `graph["crs"]` (local projected CRS),
-            `graph["walk_speed"]` (float), and `graph["type"]` (network_type).
+            Graph attributes include: `crs` (local projected CRS) and `type` (network_type).
 
     Raises:
         ValueError: If `network_type` is unknown, or `network_type="custom"` without `custom_filter`.
 
     Notes:
-        All walking edges are treated as bidirectional by duplicating geometries in reverse; u/v nodes
-        are assigned by factorizing unique segment endpoints. Lengths are measured in meters in a local
-        projected CRS estimated from the territory bounds.
+        All walking edges are treated as bidirectional by the undirected UrbanGraph adjacency builder.
+        Lengths are measured in meters in a local projected CRS estimated from the territory bounds.
     """
     polygon4326 = get_4326_boundary(osm_id=osm_id, territory=territory)
 
@@ -382,58 +419,45 @@ def get_walk_graph(
     else:
         needed_tags = set(osm_edge_tags)
 
-    logger.info("Downloading walk network via Overpass ...")
-    edges, local_crs = _build_edges_from_overpass(polygon4326, road_filter, needed_tags=needed_tags, simplify=simplify)
+    local_crs = estimate_crs_for_bounds(*polygon4326.bounds)
 
-    if len(edges) == 0:
+    logger.info("Downloading walk network via Overpass ...")
+    edges_gdf = _build_edges_from_overpass(
+        polygon4326, road_filter, needed_tags=needed_tags, local_crs=local_crs, simplify=simplify
+    )
+
+    if len(edges_gdf) == 0:
         logger.warning("No edges found, returning empty graph")
-        return nx.MultiGraph()
+        return UrbanGraph.empty(crs=local_crs, is_multigraph=True, is_directed=False, graph_type=network_type)
 
     if clip_by_territory:
         clip_poly_gdf = gpd.GeoDataFrame(geometry=[polygon4326], crs=4326).to_crs(local_crs)
-        edges = edges.clip(clip_poly_gdf, keep_geom_type=True).explode(ignore_index=True)
+        edges_gdf = edges_gdf.clip(clip_poly_gdf, keep_geom_type=True).explode(ignore_index=True)
+        if len(edges_gdf) == 0:
+            logger.warning("No edges left after clipping, returning empty graph")
+            return UrbanGraph.empty(crs=local_crs, is_multigraph=True, is_directed=False, graph_type=network_type)
 
-    # future nodes identification
-    coords = edges.geometry.get_coordinates().to_numpy()
-    counts = edges.geometry.count_coordinates()
-    cuts = np.cumsum(counts)
-    first_idx = np.r_[0, cuts[:-1]]
-    last_idx = cuts - 1
-    starts = coords[first_idx]
-    ends = coords[last_idx]
-    edges["start"] = list(map(tuple, starts))
-    edges["end"] = list(map(tuple, ends))
+    nodes_gdf, edges_gdf = _build_nodes_and_uv(edges_gdf, local_crs)
 
-    all_endpoints = pd.Index(edges["start"]).append(pd.Index(edges["end"]))
-    labels, uniques = pd.factorize(all_endpoints)
-    n = len(edges)
-    u = labels[:n]
-    v = labels[n:]
+    edges_gdf["length_meter"] = edges_gdf.geometry.length.round(3)
+    edges_gdf["time_min"] = (edges_gdf["length_meter"] / float(walk_speed)).round(3)
+    edges_gdf["type"] = "walk"
 
-    edges["length_meter"] = edges.geometry.length.round(3)
-    edges["time_min"] = (edges["length_meter"] / float(walk_speed)).round(3)
-    edges["type"] = "walk"
+    edges_gdf = _assign_edge_keys(edges_gdf)
 
-    # graph build
-    graph = nx.MultiGraph()
-    graph.add_nodes_from((i, {"x": float(x), "y": float(y)}) for i, (x, y) in enumerate(uniques))
+    edge_attrs = set(needed_tags) | {"u", "v", "k", "geometry", "length_meter", "time_min", "type"}
+    edges_gdf = edges_gdf[[col for col in edges_gdf.columns if col in edge_attrs]].copy()
 
-    edge_attrs = set(needed_tags)
-    if keep_edge_geometry:
-        edge_attrs |= {"geometry"}
-    edge_attrs |= {"length_meter", "time_min", "type"}
-    edge_attrs = [attr for attr in edge_attrs if attr in edges.columns]
+    # TODO: restore largest-component filtering after UrbanGraph component utilities are implemented.
+    # if keep_largest_subgraph:
+    #     graph = keep_largest_connected_component(graph)
 
-    attrs_iter = edges[edge_attrs].to_dict("records")
-    graph.add_edges_from((int(uu), int(vv), d) for uu, vv, d in zip(u, v, attrs_iter))
-
-    if keep_largest_subgraph:
-        graph = keep_largest_connected_component(graph)
-
-    mapping = {old: new for new, old in enumerate(graph.nodes())}
-    graph = nx.relabel_nodes(graph, mapping)
-    graph.graph["crs"] = local_crs
-    graph.graph["walk_speed"] = float(walk_speed)
-    graph.graph["type"] = network_type
     logger.debug("Walk graph built.")
-    return graph
+    return UrbanGraph(
+        nodes_gdf=nodes_gdf,
+        edges_gdf=edges_gdf,
+        is_multigraph=True,
+        is_directed=False,
+        crs=local_crs,
+        graph_type=network_type,
+    )

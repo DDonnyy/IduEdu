@@ -6,7 +6,7 @@ description = "IduEdu is a Python package for the creation and manipulation of c
 authors = ["DDonnyy <63115678+DDonnyy@users.noreply.github.com>"]
 readme = "README.md"
 
-packages = [{ include = "iduedu", from = "src" }]
+packages = [{ include = "iduedu" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
@@ -14,7 +14,6 @@ tqdm = "^4.67.0"
 numpy = "^2.2.0"
 pandas = "^2.3.0"
 geopandas = "^1.1.0"
-networkx = "^3.5.0"
 loguru = "^0.7.3"
 scipy = "^1.16.0"
 numba = "^0.61.0"

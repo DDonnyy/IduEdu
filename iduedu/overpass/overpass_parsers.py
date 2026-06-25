@@ -3,9 +3,9 @@ import re
 from collections import defaultdict
 from itertools import chain, combinations
 
+import geopandas as gpd
 import numpy as np
 import pandas as pd
-from overpass.overpass_downloaders import fetch_member_tags
 from pyproj import Transformer
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
@@ -13,6 +13,7 @@ from shapely import LineString, MultiLineString, Point, line_merge
 from shapely.ops import substring
 
 from iduedu.constants.highway_enums import HighwayType
+from iduedu.overpass.overpass_downloaders import fetch_member_tags
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
@@ -407,40 +408,63 @@ def _speed_on_interval(a: float, b: float, cumdist: np.ndarray, seg_speeds: np.n
     return float(acc / total_len) if total_len > 0 else float(np.nan)
 
 
+def _drop_reverse_duplicate_bidirectional_edges(
+    edges_gdf: gpd.GeoDataFrame,
+    *,
+    u_col: str = "u",
+    v_col: str = "v",
+) -> gpd.GeoDataFrame:
+    if edges_gdf.empty or "oneway" not in edges_gdf.columns:
+        return edges_gdf
+
+    oneway = edges_gdf["oneway"].map(lambda value: True if pd.isna(value) else bool(value))
+    if oneway.all():
+        return edges_gdf
+
+    directed_edges = edges_gdf.loc[oneway].copy()
+    bidirectional_edges = edges_gdf.loc[~oneway].copy()
+
+    u_key = bidirectional_edges[u_col].astype(str)
+    v_key = bidirectional_edges[v_col].astype(str)
+    bidirectional_edges["_u_key"] = np.where(u_key <= v_key, u_key, v_key)
+    bidirectional_edges["_v_key"] = np.where(u_key <= v_key, v_key, u_key)
+
+    sort_columns = []
+    if "route" in bidirectional_edges.columns:
+        bidirectional_edges["_route_missing"] = bidirectional_edges["route"].isna()
+        sort_columns.append("_route_missing")
+
+    if sort_columns:
+        bidirectional_edges = bidirectional_edges.sort_values(sort_columns, kind="stable")
+
+    bidirectional_edges = bidirectional_edges.drop_duplicates(subset=["_u_key", "_v_key", "type"], keep="first")
+    bidirectional_edges = bidirectional_edges.drop(
+        columns=["_u_key", "_v_key", "_route_missing"],
+        errors="ignore",
+    )
+
+    edges = pd.concat([directed_edges, bidirectional_edges], ignore_index=True, sort=False)
+    return gpd.GeoDataFrame(edges, geometry=edges_gdf.geometry.name, crs=edges_gdf.crs)
+
+
 def overpass_ground_transport2edgenode(
     loc: pd.Series,
     local_crs,
     ref2speed,
     needed_tags,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
 
     nodes_data: list[dict] = []
     edges_data: list[dict] = []
 
-    def add_node(node_id, x, y, node_type):
-        x = round(x, 5)
-        y = round(y, 5)
-        nodes_data.append(
-            {
-                "node_id": node_id,
-                "point": (x, y),
-                "route": transport_name,
-                "type": node_type,
-            }
-        )
+    def add_node(node_id, point, node_type):
+        nodes_data.append({"node_id": node_id, "geometry": point, "type": node_type})
 
-    def add_edge(u, v, edge_type, geometry=None, extra_data=None, speed_m_min=None):
-        payload = {
-            "u": u,
-            "v": v,
-            "route": transport_name,
-            "type": edge_type,
-        }
-        if geometry is not None:
-            payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
+    def add_edge(u, v, edge_type, geometry: LineString, extra_data=None, speed_m_min=None, oneway=True):
+        payload = {"u": u, "v": v, "type": edge_type, "geometry": geometry, "oneway": bool(oneway)}
         if extra_data is not None:
             payload["extra_data"] = extra_data
-        if speed is not None:
+        if speed_m_min is not None:
             payload["speed_m_min"] = speed_m_min
         edges_data.append(payload)
 
@@ -469,7 +493,7 @@ def overpass_ground_transport2edgenode(
         ["ref", "geometry"]
     ]
     if len(ways_df) == 0:
-        return pd.DataFrame(), pd.DataFrame()
+        return gpd.GeoDataFrame(), gpd.GeoDataFrame()
 
     ways_df["speed"] = ways_df["ref"].map(ref2speed)
 
@@ -639,7 +663,7 @@ def overpass_ground_transport2edgenode(
         if projected_stop.distance(platform) > 100:
             continue
 
-        add_node(node_id=stop_ref, x=projected_stop.x, y=projected_stop.y, node_type=transport_type)
+        add_node(node_id=stop_ref, point=projected_stop, node_type=transport_type)
 
         if last_dist is not None:
             seg = substring(path, last_dist, stop_dist)
@@ -659,19 +683,30 @@ def overpass_ground_transport2edgenode(
         last_projected_stop_id = stop_ref
         last_dist = stop_dist
 
-        add_node(node_id=plat_ref, x=platform.x, y=platform.y, node_type="platform")
-        # boarding_geom = LineString(
-        #     [(round(projected_stop.x, 5), round(projected_stop.y, 5)), (round(platform.x, 5), round(platform.y, 5))]
-        # )
-        add_edge(u=plat_ref, v=stop_ref, edge_type="boarding", geometry=None)
-        add_edge(u=stop_ref, v=plat_ref, edge_type="boarding", geometry=None)
+        add_node(node_id=plat_ref, point=platform, node_type="platform")
+        boarding_geom = LineString([projected_stop, platform])
+        add_edge(u=stop_ref, v=plat_ref, edge_type="boarding", geometry=boarding_geom, oneway=False)
 
-    nodes_df = pd.DataFrame(nodes_data).drop_duplicates(subset=["node_id"])
-    edges_df = pd.DataFrame(edges_data)
-    return edges_df, nodes_df
+    nodes_gdf = gpd.GeoDataFrame(
+        nodes_data,
+        columns=["node_id", "geometry", "type"],
+        geometry="geometry",
+        crs=local_crs,
+    ).drop_duplicates(subset=["node_id"])
+    edges_gdf = gpd.GeoDataFrame(
+        edges_data,
+        columns=["u", "v", "type", "geometry", "oneway", "extra_data", "speed_m_min"],
+        geometry="geometry",
+        crs=local_crs,
+    )
+
+    nodes_gdf["route"] = transport_name
+    edges_gdf["route"] = transport_name
+
+    return edges_gdf, nodes_gdf
 
 
-def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
+def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
 
     nodes_data: list[dict] = []
     edges_data: list[dict] = []
@@ -689,35 +724,23 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
     stop_areas_group = subway_data[subway_data["is_stop_area_group"]].copy()
     stations_data = subway_data[subway_data["is_station"]].copy()
 
-    def add_node(node_id, x, y, node_type):
-        x = round(x, 5)
-        y = round(y, 5)
-        nodes_data.append(
-            {
-                "node_id": node_id,
-                "point": (x, y),
-                "route": transport_name,
-                "type": node_type,
-            }
-        )
+    def add_node(node_id, point, node_type, route=None):
+        payload = {"node_id": node_id, "geometry": point, "type": node_type}
+        if route is not None:
+            payload["route"] = route
+        nodes_data.append(payload)
 
-    def add_edge(u, v, edge_type, geometry=None):
-        payload = {
-            "u": u,
-            "v": v,
-            "route": transport_name,
-            "type": edge_type,
-            # "extra_data": extra_data,
-        }
-        if geometry is not None:
-            payload["geometry"] = LineString([(round(x, 5), round(y, 5)) for x, y in geometry.coords])
+    def add_edge(u, v, edge_type, geometry, route=None, oneway=True):
+        payload = {"u": u, "v": v, "type": edge_type, "geometry": geometry, "oneway": bool(oneway)}
+        if route is not None:
+            payload["route"] = route
         edges_data.append(payload)
 
     add_edges, add_nodes = parse_overpass_subway_data(
         stop_areas, stop_areas_group, stations_data, local_crs
     )  # Входы/выходы, пересадки и тд
-    add_edges.rename(columns={"u_ref": "u", "v_ref": "v"}, inplace=True)
-    add_nodes.rename(columns={"ref_id": "node_id"}, inplace=True)
+    add_edges = add_edges.rename(columns={"u_ref": "u", "v_ref": "v"})
+    add_nodes = add_nodes.rename(columns={"ref_id": "node_id"})
 
     for _, row in routes_data.iterrows():
 
@@ -778,7 +801,7 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
                     potential_nodes = add_nodes[add_nodes["node_id"].isin(add_edges_from_stop["v"])]
                     for _, row in potential_nodes.iterrows():
                         if row.type == "subway_platform":
-                            p_pt = row.point if not pd.isna(row.point) else p_pt
+                            p_pt = row.geometry if not pd.isna(row.geometry) else p_pt
                             p_ref = row.node_id
                             break
 
@@ -847,37 +870,52 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
             if projected_stop.distance(platform) > 100:
                 continue
 
-            add_node(node_id=stop_ref, x=projected_stop.x, y=projected_stop.y, node_type=transport_type)
+            add_node(node_id=stop_ref, point=projected_stop, node_type=transport_type, route=transport_name)
 
             if last_dist is not None:
                 seg = substring(path, last_dist, stop_dist)
                 if isinstance(seg, Point):
                     seg = LineString((seg, seg))
-                add_edge(u=last_projected_stop_id, v=stop_ref, edge_type=transport_type, geometry=seg)
+                add_edge(
+                    u=last_projected_stop_id, v=stop_ref, edge_type=transport_type, geometry=seg, route=transport_name
+                )
 
             last_projected_stop_id = stop_ref
             last_dist = stop_dist
 
-            add_node(node_id=plat_ref, x=platform.x, y=platform.y, node_type="subway_platform")
-            add_edge(u=plat_ref, v=stop_ref, edge_type="boarding", geometry=None)
-            add_edge(u=stop_ref, v=plat_ref, edge_type="boarding", geometry=None)
+            add_node(node_id=plat_ref, point=platform, node_type="subway_platform", route=transport_name)
+            add_edge(
+                u=plat_ref,
+                v=stop_ref,
+                edge_type="boarding",
+                geometry=LineString([platform, projected_stop]),
+                route=transport_name,
+                oneway=False,
+            )
 
-    if len(edges_data) == 0:
-        return pd.DataFrame(), pd.DataFrame()
-    nodes_df = pd.DataFrame(nodes_data).drop_duplicates(subset=["node_id"])
+    nodes_gdf = gpd.GeoDataFrame(nodes_data, geometry="geometry", crs=local_crs).drop_duplicates(
+        subset=["node_id", "route", "type"]
+    )
 
-    merged_nodes = pd.merge(add_nodes, nodes_df, how="outer", on="node_id")
+    merged_nodes = pd.merge(add_nodes, nodes_gdf, how="outer", on="node_id")
 
     base_cols = {c[:-2] for c in merged_nodes.columns if c.endswith("_x")}
     for base in base_cols:
         col_x = f"{base}_x"
         col_y = f"{base}_y"
-
         merged_nodes[base] = merged_nodes[col_x].combine_first(merged_nodes[col_y])
         merged_nodes.drop(columns=[col_x, col_y], inplace=True)
 
-    edges_df = pd.DataFrame(edges_data)
-    merged_edges = pd.merge(add_edges, edges_df, how="outer", on=["u", "v"])
+    merged_nodes = gpd.GeoDataFrame(merged_nodes, geometry="geometry", crs=local_crs)
+
+    edges_gdf = gpd.GeoDataFrame(
+        edges_data,
+        columns=["u", "v", "type", "geometry", "oneway", "route"],
+        geometry="geometry",
+        crs=local_crs,
+    )
+
+    merged_edges = pd.merge(add_edges, edges_gdf, how="outer", on=["u", "v", "type"])
     base_cols = {c[:-2] for c in merged_edges.columns if c.endswith("_x")}
     for base in base_cols:
         col_x = f"{base}_x"
@@ -886,10 +924,21 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs):
         merged_edges[base] = merged_edges[col_x].combine_first(merged_edges[col_y])
         merged_edges.drop(columns=[col_x, col_y], inplace=True)
 
+    merged_edges = gpd.GeoDataFrame(merged_edges, geometry="geometry", crs=local_crs)
+    merged_edges = _drop_reverse_duplicate_bidirectional_edges(merged_edges)
+
     platforms_ids = merged_nodes[merged_nodes["type"] == "subway_platform"]["node_id"].unique()
-    platforms_with_station = merged_edges[
-        (merged_edges["u"].isin(platforms_ids)) & (merged_edges["type"] != "boarding")
-    ]["u"].unique()
+    platform_link_edges = merged_edges[
+        (merged_edges["type"] != "boarding")
+        & (merged_edges["u"].isin(platforms_ids) | merged_edges["v"].isin(platforms_ids))
+    ]
+    platforms_with_station = pd.concat(
+        [
+            platform_link_edges.loc[platform_link_edges["u"].isin(platforms_ids), "u"],
+            platform_link_edges.loc[platform_link_edges["v"].isin(platforms_ids), "v"],
+        ],
+        ignore_index=True,
+    ).unique()
 
     platforms_wout_station = (
         pd.Index(platforms_ids.astype(str)).difference(platforms_with_station.astype(str)).to_numpy()
@@ -986,7 +1035,7 @@ def patch_members_roles_inplace(stop_areas_df):
 
 def parse_overpass_subway_data(
     stop_areas, stop_areas_group, stations_data, to_crs
-) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     graph_nodes = []
     graph_edges = []
 
@@ -1033,28 +1082,14 @@ def parse_overpass_subway_data(
         return stations, stops, platforms, entrances, entry_only, exit_only
 
     def add_node(ref_id, x, y, node_type):
-
         if x is None or y is None:
-            point = None
+            return
         else:
-            point = transformer.transform(x, y)
+            point = Point(transformer.transform(x, y))
+        graph_nodes.append({"ref_id": int(ref_id), "geometry": point, "type": osm_roles_to_iduedu.get(node_type)})
 
-        graph_nodes.append(
-            {
-                "ref_id": int(ref_id),
-                "point": point,
-                "type": osm_roles_to_iduedu.get(node_type),
-            }
-        )
-
-    def add_edge(u, v, edge_type):
-        graph_edges.append(
-            {
-                "u_ref": int(u),
-                "v_ref": int(v),
-                "type": edge_type,
-            }
-        )
+    def add_edge(u, v, edge_type, oneway=True):
+        graph_edges.append({"u_ref": int(u), "v_ref": int(v), "type": edge_type, "oneway": bool(oneway)})
 
     patch_members_roles_inplace(stop_areas)
 
@@ -1081,16 +1116,14 @@ def parse_overpass_subway_data(
 
         for stop in stops:
             for platform in platforms:
-                add_edge(stop["ref"], platform["ref"], "boarding")
-                add_edge(platform["ref"], stop["ref"], "boarding")
+                add_edge(stop["ref"], platform["ref"], "boarding", oneway=False)
 
         has_station = len(stations) > 0
 
         if has_station:
             for platform in platforms:
                 for station in stations:
-                    add_edge(station["ref"], platform["ref"], "subway_station")
-                    add_edge(platform["ref"], station["ref"], "subway_station")
+                    add_edge(station["ref"], platform["ref"], "subway_station", oneway=False)
 
         targets = [s["ref"] for s in stations] if has_station else [p["ref"] for p in platforms]
 
@@ -1124,16 +1157,16 @@ def parse_overpass_subway_data(
         pairs = list(combinations(connect_refs, 2))
         for pair in pairs:
             if pair[0] != pair[1]:
-                add_edge(pair[0], pair[1], "subway_transfer")
-                add_edge(pair[1], pair[0], "subway_transfer")
+                add_edge(pair[0], pair[1], "subway_transfer", oneway=False)
 
-    edges_gdf = pd.DataFrame(graph_edges, columns=["u_ref", "v_ref", "type"])
-    nodes_gdf = pd.DataFrame(graph_nodes, columns=["ref_id", "point", "type"])
+    nodes_gdf = gpd.GeoDataFrame(graph_nodes, columns=["ref_id", "geometry", "type"], geometry="geometry", crs=to_crs)
+    edges_df = pd.DataFrame(graph_edges, columns=["u_ref", "v_ref", "type", "oneway"])
 
-    if len(edges_gdf) == 0:
-        return edges_gdf, nodes_gdf
+    if len(nodes_gdf) == 0:
+        return gpd.GeoDataFrame(), nodes_gdf
 
-    nodes_gdf["extra_data"] = {}
+    nodes_gdf = nodes_gdf.dropna(subset=["geometry"]).drop_duplicates(subset=["ref_id"])
+    nodes_gdf["extra_data"] = [{} for _ in range(len(nodes_gdf))]
 
     for _, station_data in stations_data.iterrows():
         tags = station_data["tags"]
@@ -1143,10 +1176,7 @@ def parse_overpass_subway_data(
         extra_data["depth"] = extra_data.get("depth", 0)
         nodes_gdf.loc[station_ind, "extra_data"] = [extra_data for _ in station_ind]
 
-    edges_gdf = edges_gdf.drop_duplicates(subset=["u_ref", "v_ref"])
-    edges_gdf["length_meter"] = 0.0
-    edges_gdf["time_min"] = 0.0
-    edges_gdf["geometry"] = None
+    edges_df = edges_df.drop_duplicates(subset=["u_ref", "v_ref", "type"])
 
     def _depth_from_extra(d):
         if isinstance(d, dict):
@@ -1157,17 +1187,18 @@ def parse_overpass_subway_data(
                 return 0.0
         return 0.0
 
-    if len(nodes_gdf) == 0:
-        return None
-    nodes_info = nodes_gdf[["ref_id", "point", "type", "extra_data"]].copy()
+    if len(edges_df) == 0:
+        return gpd.GeoDataFrame(), nodes_gdf
+
+    nodes_info = nodes_gdf[["ref_id", "geometry", "type", "extra_data"]].copy()
     nodes_info["depth_m"] = nodes_info["extra_data"].apply(_depth_from_extra)
 
-    nodes_lut = nodes_info.set_index("ref_id")[["point", "type", "depth_m"]]
+    nodes_lut = nodes_info.set_index("ref_id")[["geometry", "type", "depth_m"]]
 
     edges_nodes = (
-        edges_gdf.join(nodes_lut.add_prefix("u_"), on="u_ref")
+        edges_df.join(nodes_lut.add_prefix("u_"), on="u_ref")
         .join(nodes_lut.add_prefix("v_"), on="v_ref")
-        .drop_duplicates(subset=["u_ref", "v_ref"])
+        .drop_duplicates(subset=["u_ref", "v_ref", "type"])
     )
 
     def _horiz_len(pu, pv):
@@ -1178,7 +1209,24 @@ def parse_overpass_subway_data(
         except Exception:
             return np.nan
 
-    edges_nodes["horiz_m"] = edges_nodes.apply(lambda r: _horiz_len(r["u_point"], r["v_point"]), axis=1)
+    missing_endpoint = edges_nodes["u_geometry"].isna() | edges_nodes["v_geometry"].isna()
+    edges_nodes = edges_nodes.loc[~missing_endpoint].copy()
+    if len(edges_nodes) == 0:
+        return gpd.GeoDataFrame(), nodes_gdf
+
+    def _straight_geom(pu, pv):
+        if pu is None or pv is None:
+            return None
+        try:
+            return LineString([pu, pv])
+        except Exception:
+            return None
+
+    edges_nodes["geometry"] = edges_nodes.apply(lambda r: _straight_geom(r["u_geometry"], r["v_geometry"]), axis=1)
+    edges_nodes = edges_nodes.dropna(subset=["geometry"]).copy()
+    edges_nodes["length_meter"] = 0.0
+    edges_nodes["time_min"] = 0.0
+    edges_nodes["horiz_m"] = edges_nodes.apply(lambda r: _horiz_len(r["u_geometry"], r["v_geometry"]), axis=1)
 
     edges_nodes["station_depth_m"] = np.where(
         edges_nodes["u_type"].eq("subway_station"),
@@ -1196,18 +1244,6 @@ def parse_overpass_subway_data(
     )
     edges_nodes.loc[mask_escal, "time_min"] = edges_nodes.loc[mask_escal, "length_meter"] / ESCALATOR_SPEED_MPMIN
 
-    def _straight_geom(pu, pv):
-        if pu is None or pv is None:
-            return None
-        try:
-            return LineString([pu, pv])
-        except Exception:
-            return None
-
-    edges_nodes.loc[mask_escal, "geometry"] = edges_nodes.loc[mask_escal].apply(
-        lambda r: _straight_geom(r["u_point"], r["v_point"]), axis=1
-    )
-
     mask_transfer = edges_nodes["type"].eq("subway_transfer") & edges_nodes["horiz_m"].notna()
     edges_nodes.loc[mask_transfer, "length_meter"] = TRANSFER_PATH_FACTOR * edges_nodes.loc[
         mask_transfer, "horiz_m"
@@ -1215,9 +1251,12 @@ def parse_overpass_subway_data(
     edges_nodes.loc[mask_transfer, "time_min"] = (
         edges_nodes.loc[mask_transfer, "length_meter"] / WALK_SPEED_MPMIN
     ).round(1)
-    edges_nodes.loc[mask_transfer, "geometry"] = edges_nodes.loc[mask_transfer].apply(
-        lambda r: _straight_geom(r["u_point"], r["v_point"]), axis=1
-    )
 
-    edges_gdf[["length_meter", "time_min", "geometry"]] = edges_nodes[["length_meter", "time_min", "geometry"]]
+    edges_gdf = gpd.GeoDataFrame(
+        edges_nodes[["u_ref", "v_ref", "type", "length_meter", "time_min", "geometry", "oneway"]].copy(),
+        geometry="geometry",
+        crs=to_crs,
+    )
+    edges_gdf = _drop_reverse_duplicate_bidirectional_edges(edges_gdf, u_col="u_ref", v_col="v_ref")
+
     return edges_gdf, nodes_gdf

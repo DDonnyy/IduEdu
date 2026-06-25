@@ -4,6 +4,7 @@ from typing import Any
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString, Point
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import substring
 
 from iduedu.graph.urban_graph import UrbanGraph
@@ -93,6 +94,80 @@ class UrbanGraphChanges:
             raise ValueError(f"edges_to_delete missing required columns: {sorted(missing)}")
         if etd[key_cols].isna().any().any():
             raise ValueError(f"edges_to_delete columns {key_cols} must not contain NaN")
+
+
+def relabel_urban_graph(graph_gdf: UrbanGraph) -> UrbanGraph:
+    """
+    Relabel node ids to a dense ``RangeIndex`` and update edge endpoints.
+
+    The function does not mutate the source graph. For multigraphs, ``k`` is
+    recalculated after relabeling to keep ``['u', 'v', 'k']`` unique.
+    """
+
+    nodes = graph_gdf.nodes_gdf.copy()
+    edges = graph_gdf.edges_gdf.copy()
+
+    mapping = {old: new for new, old in enumerate(nodes.index)}
+    nodes.index = pd.RangeIndex(len(nodes))
+
+    if not edges.empty:
+        edges["u"] = edges["u"].map(mapping)
+        edges["v"] = edges["v"].map(mapping)
+        edges = edges.dropna(subset=["u", "v"]).copy()
+
+        if not edges.empty:
+            edges[["u", "v"]] = edges[["u", "v"]].astype(int)
+            if graph_gdf.is_multigraph:
+                edges["k"] = edges.groupby(["u", "v"], sort=False).cumcount()
+            edges = edges.reset_index(drop=True)
+
+    relabeled_graph = UrbanGraph(
+        nodes_gdf=nodes,
+        edges_gdf=edges,
+        is_multigraph=graph_gdf.is_multigraph,
+        is_directed=graph_gdf.is_directed,
+        edge_direction_column=graph_gdf.edge_direction_column,
+        adjacency_weight=graph_gdf.adjacency_weight,
+        crs=graph_gdf.crs,
+        graph_type=graph_gdf.type,
+    )
+    return relabeled_graph
+
+
+def clip_urban_graph(graph_gdf: UrbanGraph, polygon: BaseGeometry) -> UrbanGraph:
+    """
+    Clip graph nodes by geometry and keep only edges with retained endpoints.
+
+    ``polygon`` is expected to be in the same CRS as ``graph_gdf``. Node ids are
+    preserved; call :func:`relabel_urban_graph` if dense labels are needed.
+    """
+
+    nodes = graph_gdf.nodes_gdf.copy()
+    edges = graph_gdf.edges_gdf.copy()
+
+    if not isinstance(nodes, gpd.GeoDataFrame):
+        raise TypeError(f"graph.nodes_gdf must be GeoDataFrame, got {type(nodes).__name__}")
+    if not isinstance(polygon, BaseGeometry):
+        raise TypeError(f"polygon must be a shapely geometry, got {type(polygon).__name__}")
+
+    nodes = nodes.clip(polygon, keep_geom_type=True)
+
+    if not edges.empty:
+        node_ids = nodes.index
+        edges = edges.loc[edges["u"].isin(node_ids) & edges["v"].isin(node_ids)].copy()
+        edges = edges.reset_index(drop=True)
+
+    clipped_graph = UrbanGraph(
+        nodes_gdf=nodes,
+        edges_gdf=edges,
+        is_multigraph=graph_gdf.is_multigraph,
+        is_directed=graph_gdf.is_directed,
+        edge_direction_column=graph_gdf.edge_direction_column,
+        adjacency_weight=graph_gdf.adjacency_weight,
+        crs=graph_gdf.crs,
+        graph_type=graph_gdf.type,
+    )
+    return clipped_graph
 
 
 def project_objects2urban_graph(

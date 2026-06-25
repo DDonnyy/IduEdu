@@ -43,6 +43,8 @@ class UrbanGraph:
     __slots__ = (
         "nodes_gdf",
         "edges_gdf",
+        "crs",
+        "type",
         "is_multigraph",
         "is_directed",
         "edge_direction_column",
@@ -61,9 +63,13 @@ class UrbanGraph:
         *,
         edge_direction_column: str | None = None,
         adjacency_weight: str = "time_min",
+        crs: Any | None = None,
+        graph_type: str | None = None,
     ):
         self.nodes_gdf = nodes_gdf
         self.edges_gdf = edges_gdf
+        self.crs = crs
+        self.type = graph_type
         self.is_multigraph = is_multigraph
         self.edge_direction_column = edge_direction_column
         self.is_directed = is_directed or edge_direction_column is not None
@@ -78,15 +84,73 @@ class UrbanGraph:
         return (
             f"UrbanGraph(nodes={len(self.nodes_gdf)}, edges={len(self.edges_gdf)}, "
             f"is_multigraph={self.is_multigraph}, is_directed={self.is_directed}, "
-            f"edge_direction_column={self.edge_direction_column!r})"
+            f"edge_direction_column={self.edge_direction_column!r}, crs={self.crs!r}, type={self.type!r})"
         )
+
+    @classmethod
+    def empty(
+        cls,
+        *,
+        crs: Any | None = None,
+        is_multigraph: bool = True,
+        is_directed: bool = False,
+        edge_direction_column: str | None = None,
+        adjacency_weight: str = "time_min",
+        graph_type: str | None = None,
+    ) -> "UrbanGraph":
+        nodes_gdf = gpd.GeoDataFrame(geometry=gpd.GeoSeries([], crs=crs), crs=crs)
+        edge_columns = ["u", "v", "geometry", "length_meter", "time_min"]
+        if is_multigraph:
+            edge_columns.insert(2, "k")
+        if edge_direction_column is not None:
+            edge_columns.append(edge_direction_column)
+        edges_gdf = gpd.GeoDataFrame(columns=edge_columns, geometry="geometry", crs=crs)
+        if edge_direction_column is not None:
+            edges_gdf[edge_direction_column] = pd.Series(dtype=bool)
+        return cls(
+            nodes_gdf=nodes_gdf,
+            edges_gdf=edges_gdf,
+            is_multigraph=is_multigraph,
+            is_directed=is_directed,
+            edge_direction_column=edge_direction_column,
+            adjacency_weight=adjacency_weight,
+            crs=crs,
+            graph_type=graph_type,
+        )
+
+    @staticmethod
+    def _gdf_crs(frame) -> Any | None:
+        if not isinstance(frame, gpd.GeoDataFrame):
+            return None
+        try:
+            return frame.crs
+        except AttributeError:
+            return None
+
+    def _sync_crs(self) -> None:
+        nodes_crs = self._gdf_crs(self.nodes_gdf)
+        edges_crs = self._gdf_crs(self.edges_gdf)
+        inferred_crs = self.crs or nodes_crs or edges_crs
+
+        if inferred_crs is None:
+            self.crs = None
+            return
+
+        for name, frame_crs in (("nodes_gdf", nodes_crs), ("edges_gdf", edges_crs)):
+            if frame_crs is not None and frame_crs != inferred_crs:
+                raise ValueError(f"{name}.crs={frame_crs} does not match graph crs={inferred_crs}")
+
+        if isinstance(self.nodes_gdf, gpd.GeoDataFrame) and nodes_crs is None and self.nodes_gdf.active_geometry_name:
+            self.nodes_gdf = self.nodes_gdf.set_crs(inferred_crs)
+        if isinstance(self.edges_gdf, gpd.GeoDataFrame) and edges_crs is None and self.edges_gdf.active_geometry_name:
+            self.edges_gdf = self.edges_gdf.set_crs(inferred_crs)
+
+        self.crs = inferred_crs
 
     def _validate_nodes(self) -> None:
         nodes = self.nodes_gdf
         if not isinstance(nodes, (gpd.GeoDataFrame, pd.DataFrame)):
             raise TypeError(f"nodes_gdf must be DataFrame or GeoDataFrame, got {type(nodes).__name__}")
-        if nodes.empty:
-            raise ValueError("nodes_gdf is empty")
         if nodes.index.has_duplicates:
             raise ValueError("nodes_gdf.index must be unique")
         if isinstance(nodes, gpd.GeoDataFrame):
@@ -100,7 +164,7 @@ class UrbanGraph:
         if not isinstance(edges, (gpd.GeoDataFrame, pd.DataFrame)):
             raise TypeError(f"edges_gdf must be DataFrame or GeoDataFrame, got {type(edges).__name__}")
         if edges.empty:
-            raise ValueError("edges_gdf is empty")
+            return
         required = {"u", "v", "geometry", "length_meter", "time_min"}
         missing = required - set(edges.columns)
         if missing:
@@ -134,8 +198,13 @@ class UrbanGraph:
         edges = self.edges_gdf
 
         if isinstance(nodes, gpd.GeoDataFrame) and isinstance(edges, gpd.GeoDataFrame):
-            if nodes.crs != edges.crs:
-                raise ValueError(f"nodes and edges crs mismatch: nodes.crs={nodes.crs}, edges.crs={edges.crs}")
+            nodes_crs = self._gdf_crs(nodes)
+            edges_crs = self._gdf_crs(edges)
+            if nodes_crs is not None and edges_crs is not None and nodes_crs != edges_crs:
+                raise ValueError(f"nodes and edges crs mismatch: nodes.crs={nodes_crs}, edges.crs={edges_crs}")
+
+        if edges.empty:
+            return
 
         edge_nodes = pd.Index(pd.concat([edges["u"], edges["v"]], ignore_index=True).unique())
         missing_nodes = edge_nodes.difference(nodes.index)
@@ -146,6 +215,7 @@ class UrbanGraph:
     def _validate(self) -> None:
         self._validate_nodes()
         self._validate_edges()
+        self._sync_crs()
         self._validate_nodes_edges()
 
     def copy(self) -> "UrbanGraph":
@@ -166,6 +236,8 @@ class UrbanGraph:
             is_directed=self.is_directed,
             edge_direction_column=self.edge_direction_column,
             adjacency_weight=self.adjacency_weight,
+            crs=self.crs,
+            graph_type=self.type,
         )
 
         if self.adjacency_matrix is not None:
@@ -183,7 +255,10 @@ class UrbanGraph:
         self.is_multigraph = other.is_multigraph
         self.is_directed = other.is_directed
         self.edge_direction_column = other.edge_direction_column
+        self.crs = other.crs
+        self.type = other.type
         self._validate()
+        self._sync_crs()
         self.adjacency_matrix = None
         self.adjacency_nodelist = []
         self.node_to_adjacency_pos = {}
@@ -194,7 +269,9 @@ class UrbanGraph:
         nodelist = list(nodelist)
 
         if len(nodelist) == 0:
-            raise ValueError("nodelist must not be empty")
+            return sparse.csr_matrix((0, 0))
+        if self.edges_gdf.empty:
+            return sparse.csr_matrix((len(nodelist), len(nodelist)))
         if weight not in self.edges_gdf.columns:
             raise KeyError(f"edges_gdf has no weight column {weight!r}")
         if self.edges_gdf[weight].isna().any():
@@ -471,8 +548,8 @@ class UrbanGraph:
         nx_graph,
         restore_edge_geom: bool = False,
         *,
-        check_single_direction: bool = True,
-        single_direction_column: str = "single_direction",
+        check_oneway: bool = True,
+        oneway_column: str = "oneway",
     ) -> "UrbanGraph":
         """
         Создает ``UrbanGraph`` из графа NetworkX.
@@ -488,22 +565,22 @@ class UrbanGraph:
                 ``networkx.MultiGraph`` или ``networkx.MultiDiGraph``.
             restore_edge_geom: Если ``True``, пустая геометрия ребра будет
                 восстановлена прямым отрезком между узлами.
-            check_single_direction: Если ``True`` и в ребрах есть колонка
-                ``single_direction_column``, она будет использована для
+            check_oneway: Если ``True`` и в ребрах есть колонка
+                ``oneway_column``, она будет использована для
                 частично направленной матрицы смежности.
-            single_direction_column: Имя булевой колонки односторонности.
+            oneway_column: Имя булевой колонки односторонности ребра.
 
         Returns:
             Экземпляр ``UrbanGraph``.
         """
 
-        from .graph_transformers import nx_graph2urban_graph
+        from .adapters import nx_graph2urban_graph
 
         return nx_graph2urban_graph(
             nx_graph,
-            restore_edge_geom=restore_edge_geom,
-            check_single_direction=check_single_direction,
-            single_direction_column=single_direction_column,
+            restore_edge_geom,
+            check_oneway=check_oneway,
+            oneway_column=oneway_column,
         )
 
     def to_nx_graph(self):
@@ -518,7 +595,7 @@ class UrbanGraph:
             или ``networkx.MultiDiGraph`` в зависимости от флагов графа.
         """
 
-        from .graph_transformers import urban_graph2nx_graph
+        from .adapters import urban_graph2nx_graph
 
         return urban_graph2nx_graph(self)
 
@@ -552,6 +629,62 @@ class UrbanGraph:
             return simplified
 
         self._replace_state_from(simplified)
+        return self
+
+    def relabel(self, *, inplace: bool = False) -> "UrbanGraph":
+        """
+        Перенумеровывает узлы графа в плотный ``RangeIndex``.
+
+        Функциональный аналог:
+        :func:`lprp.models.graph.graph_editor.relabel_urban_graph`.
+
+        Args:
+            inplace: Если ``True``, текущий объект будет заменен
+                перенумерованным графом. Если ``False``, будет возвращен
+                новый граф.
+
+        Returns:
+            ``UrbanGraph`` с обновленными индексами узлов и концами ребер.
+        """
+
+        from .graph_editor import relabel_urban_graph
+
+        relabeled = relabel_urban_graph(self)
+
+        if not inplace:
+            return relabeled
+
+        self._replace_state_from(relabeled)
+        return self
+
+    def clip(self, polygon, *, inplace: bool = False) -> "UrbanGraph":
+        """
+        Обрезает граф по геометрии, сохраняя только узлы внутри нее.
+
+        Ребра сохраняются только если оба их конца остались в графе. Индексы
+        узлов не перенумеровываются; при необходимости вызовите
+        :meth:`relabel`.
+
+        Функциональный аналог:
+        :func:`lprp.models.graph.graph_editor.clip_urban_graph`.
+
+        Args:
+            polygon: Геометрия Shapely в CRS графа.
+            inplace: Если ``True``, текущий объект будет заменен обрезанным
+                графом. Если ``False``, будет возвращен новый граф.
+
+        Returns:
+            Обрезанный ``UrbanGraph``.
+        """
+
+        from .graph_editor import clip_urban_graph
+
+        clipped = clip_urban_graph(self, polygon)
+
+        if not inplace:
+            return clipped
+
+        self._replace_state_from(clipped)
         return self
 
     def project_objects(

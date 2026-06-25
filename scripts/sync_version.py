@@ -4,7 +4,7 @@ import tomllib
 
 def main() -> None:
     pyproject_path = pathlib.Path("pyproject.toml")
-    version_file_path = pathlib.Path("src/iduedu/_version.py")
+    version_file_path = pathlib.Path("iduedu/_version.py")
 
     with pyproject_path.open("rb") as f:
         data = tomllib.load(f)
