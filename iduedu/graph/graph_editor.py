@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import geopandas as gpd
 import pandas as pd
@@ -170,10 +170,92 @@ def clip_urban_graph(graph_gdf: UrbanGraph, polygon: BaseGeometry) -> UrbanGraph
     return clipped_graph
 
 
+def join_urban_graphs(
+    left: UrbanGraph,
+    right: UrbanGraph,
+    *,
+    graph_type: str | None = None,
+    node_conflict: Literal["left", "right"] = "left",
+) -> UrbanGraph:
+    """
+    Join two compatible ``UrbanGraph`` objects by concatenating node and edge tables.
+
+    Shared node indexes are allowed and are merged according to
+    ``node_conflict``. Edge keys must be unique across both graphs because
+    duplicate edges are ambiguous at this layer.
+    """
+
+    if not isinstance(left, UrbanGraph):
+        raise TypeError(f"left must be UrbanGraph, got {type(left).__name__}")
+    if not isinstance(right, UrbanGraph):
+        raise TypeError(f"right must be UrbanGraph, got {type(right).__name__}")
+    if left.crs != right.crs:
+        raise ValueError(f"CRS mismatch: left.crs={left.crs}, right.crs={right.crs}")
+    if left.is_multigraph != right.is_multigraph:
+        raise ValueError("left.is_multigraph and right.is_multigraph mismatch")
+    if left.is_directed != right.is_directed:
+        raise ValueError("left.is_directed and right.is_directed mismatch")
+    if left.edge_direction_column != right.edge_direction_column:
+        raise ValueError("left.edge_direction_column and right.edge_direction_column mismatch")
+    if node_conflict not in {"left", "right"}:
+        raise ValueError(f"node_conflict must be 'left' or 'right', got {node_conflict!r}")
+
+    key_cols = ["u", "v", "k"] if left.is_multigraph else ["u", "v"]
+
+    def _edge_keys(graph: UrbanGraph) -> pd.DataFrame:
+        if graph.edges_gdf.empty:
+            return pd.DataFrame(columns=key_cols)
+        return graph.edges_gdf[key_cols].copy()
+
+    edge_keys = pd.concat([_edge_keys(left), _edge_keys(right)], ignore_index=True)
+    duplicated_edge_keys = edge_keys[edge_keys.duplicated(keep=False)]
+    if not duplicated_edge_keys.empty:
+        duplicated_records = duplicated_edge_keys.drop_duplicates().head(10).to_dict("records")
+        raise ValueError(f"Duplicate edge keys across graphs: {duplicated_records}")
+
+    node_parts = [left.nodes_gdf, right.nodes_gdf] if node_conflict == "left" else [right.nodes_gdf, left.nodes_gdf]
+    if left.nodes_gdf.empty:
+        nodes = right.nodes_gdf.copy()
+    elif right.nodes_gdf.empty:
+        nodes = left.nodes_gdf.copy()
+    else:
+        nodes = gpd.GeoDataFrame(
+            pd.concat(node_parts, axis=0, sort=False),
+            geometry=left.nodes_gdf.geometry.name,
+            crs=left.crs,
+        )
+    nodes = nodes.loc[~nodes.index.duplicated(keep="first")].copy()
+
+    if left.edges_gdf.empty:
+        edges = right.edges_gdf.copy()
+    elif right.edges_gdf.empty:
+        edges = left.edges_gdf.copy()
+    else:
+        edges = gpd.GeoDataFrame(
+            pd.concat([left.edges_gdf, right.edges_gdf], axis=0, ignore_index=True, sort=False),
+            geometry=left.edges_gdf.geometry.name,
+            crs=left.crs,
+        )
+
+    return UrbanGraph(
+        nodes_gdf=nodes,
+        edges_gdf=edges,
+        is_multigraph=left.is_multigraph,
+        is_directed=left.is_directed,
+        edge_direction_column=left.edge_direction_column,
+        adjacency_weight=left.adjacency_weight,
+        crs=left.crs,
+        graph_type=graph_type if graph_type is not None else left.type,
+    )
+
+
 def project_objects2urban_graph(
     graph_gdf: UrbanGraph,
     objects_gdf: gpd.GeoDataFrame,
     speed_m_per_min: float,
+    *,
+    max_dist: float | None = None,
+    add_link_edge: bool = True,
 ) -> tuple[UrbanGraphChanges, pd.Series]:
     """
     Готовит изменения графа для подключения объектов к ближайшим ребрам.
@@ -196,6 +278,11 @@ def project_objects2urban_graph(
             ``building_id``.
         speed_m_per_min: Скорость движения по добавляемым соединительным
             ребрам в метрах в минуту. Например, ``5 * 1000 / 60`` для 5 км/ч.
+        max_dist: Максимальная дистанция от объекта до ближайшего ребра.
+            Если ``None``, ближайшее ребро ищется без ограничения.
+        add_link_edge: Если ``True``, создается отдельный узел объекта и
+            соединительное ребро до точки проекции. Если ``False``, объект
+            сопоставляется с самой точкой проекции на графе.
 
     Returns:
         Пара ``(changes, object2node_map)``. ``changes.nodes_gdf`` содержит
@@ -224,8 +311,10 @@ def project_objects2urban_graph(
         raise ValueError("objects_gdf.index must be unique")
     if speed_m_per_min <= 0:
         raise ValueError(f"default_speed_m_per_min must be > 0, got {speed_m_per_min}")
+    if max_dist is not None and max_dist <= 0:
+        raise ValueError(f"max_dist must be > 0 or None, got {max_dist}")
 
-    original_crs = gdf_edges.crs
+    original_crs = graph_gdf.crs or gdf_edges.crs or gdf_nodes.crs
     local_crs = gdf_nodes.estimate_utm_crs()
 
     if gdf_edges.crs != local_crs:
@@ -241,6 +330,7 @@ def project_objects2urban_graph(
     new_nodes_records: list[dict[str, Any]] = []
     new_edges_records: list[dict[str, Any]] = []
     edges_to_delete_records: list[dict[str, Any]] = []
+    object2node_records: list[dict[str, Any]] = []
 
     next_node_id = max(gdf_nodes.index) + 1 if len(gdf_nodes) else 0
 
@@ -263,10 +353,35 @@ def project_objects2urban_graph(
             graph_to_object = LineString([connect_point, object_point])
             new_edges_records.append(_edge_record(connect_node, object_node, graph_to_object))
 
+    def _object2node_map_from_records() -> pd.Series:
+        if not object2node_records:
+            return pd.Series(dtype=int)
+        object2node = (
+            pd.DataFrame(object2node_records)
+            .astype({"object_index": int, "node_id": int})
+            .drop_duplicates(subset=["object_index"], keep="first")
+            .set_index("object_index")["node_id"]
+        )
+        return object2node
+
     gdf_edges["edge_geometry"] = gdf_edges["geometry"]
-    projection_join = rep_gdf.reset_index(names="object_index").sjoin_nearest(gdf_edges, how="left")
+    projection_join = rep_gdf.reset_index(names="object_index").sjoin_nearest(
+        gdf_edges, how="left", max_distance=max_dist
+    )
     projection_join = projection_join.rename_geometry("object_geometry")
     projection_join = projection_join.rename(columns={"index_right": "edge_index"})
+    projection_join = projection_join.dropna(subset=["edge_index"]).copy()
+
+    if projection_join.empty:
+        key_cols = ["u", "v", "k"] if is_multigraph else ["u", "v"]
+        return (
+            UrbanGraphChanges(
+                edges_to_delete=pd.DataFrame(columns=key_cols),
+                is_multigraph=is_multigraph,
+                is_directed=is_directed,
+            ),
+            pd.Series(dtype=int),
+        )
 
     projection_join["project_dist"] = projection_join["edge_geometry"].project(projection_join["object_geometry"])
     edge_lengths = projection_join["edge_geometry"].length
@@ -304,16 +419,37 @@ def project_objects2urban_graph(
         # Привязка обьектов к углам эджей - существующим нодам
 
         for object_index, connect_node in object_to_existing_node.items():
-            object_node = next_node_id
-            next_node_id += 1
-
             object_point = rep_gdf.loc[object_index, "geometry"]
             connect_point = gdf_nodes.loc[connect_node, "geometry"]
 
-            new_nodes_records.append({"node_id": object_node, "object_index": object_index, "geometry": object_point})
-            _add_connector_edges(object_node, connect_node, object_point, connect_point)
+            if add_link_edge:
+                object_node = next_node_id
+                next_node_id += 1
+                new_nodes_records.append(
+                    {"node_id": object_node, "object_index": object_index, "geometry": object_point}
+                )
+                _add_connector_edges(object_node, connect_node, object_point, connect_point)
+                object2node_records.append({"object_index": object_index, "node_id": object_node})
+            else:
+                object2node_records.append({"object_index": object_index, "node_id": connect_node})
 
         projection_join = projection_join[~projection_join["object_index"].isin(endpoint_object_index)].copy()
+
+    if projection_join.empty:
+        new_nodes = gpd.GeoDataFrame(new_nodes_records, geometry="geometry", crs=local_crs)
+        if not new_nodes.empty:
+            new_nodes = new_nodes.set_index("node_id", drop=True).drop(columns="object_index", errors="ignore")
+            new_nodes = new_nodes.to_crs(original_crs)
+        object2node_map = _object2node_map_from_records()
+        return (
+            UrbanGraphChanges(
+                nodes_gdf=new_nodes if not new_nodes.empty else None,
+                edges_to_delete=pd.DataFrame(columns=["u", "v", "k"] if is_multigraph else ["u", "v"]),
+                is_multigraph=is_multigraph,
+                is_directed=is_directed,
+            ),
+            object2node_map,
+        )
 
     projection_join["project_point"] = gpd.GeoSeries(
         projection_join["edge_geometry"].interpolate(projection_join["project_dist"]), crs=local_crs
@@ -352,10 +488,16 @@ def project_objects2urban_graph(
         projection_point: Point = row.project_point
         new_nodes_records.append({"node_id": projection_node, "geometry": projection_point})
         for object_index, object_point in row["object_pair"]:
-            object_node = next_node_id
-            next_node_id += 1
-            new_nodes_records.append({"node_id": object_node, "object_index": object_index, "geometry": object_point})
-            _add_connector_edges(object_node, projection_node, object_point, projection_point)
+            if add_link_edge:
+                object_node = next_node_id
+                next_node_id += 1
+                new_nodes_records.append(
+                    {"node_id": object_node, "object_index": object_index, "geometry": object_point}
+                )
+                _add_connector_edges(object_node, projection_node, object_point, projection_point)
+                object2node_records.append({"object_index": object_index, "node_id": object_node})
+            else:
+                object2node_records.append({"object_index": object_index, "node_id": projection_node})
 
     edge_group_agg = {
         "projection_node_id": tuple,
@@ -435,7 +577,9 @@ def project_objects2urban_graph(
 
     new_nodes = gpd.GeoDataFrame(new_nodes_records, geometry="geometry", crs=local_crs)
 
-    if not new_nodes.empty and "object_index" in new_nodes.columns:
+    if object2node_records:
+        object2node_map = _object2node_map_from_records()
+    elif not new_nodes.empty and "object_index" in new_nodes.columns:
         object2node_map = (
             new_nodes[["node_id", "object_index"]]
             .dropna(subset=["object_index"])
@@ -471,8 +615,8 @@ def project_objects2urban_graph(
 
     return (
         UrbanGraphChanges(
-            edges_gdf=new_edges,
-            nodes_gdf=new_nodes,
+            edges_gdf=new_edges if not new_edges.empty else None,
+            nodes_gdf=new_nodes if not new_nodes.empty else None,
             edges_to_delete=edges_to_delete,
             is_multigraph=is_multigraph,
             is_directed=is_directed,
@@ -552,4 +696,7 @@ def apply_urban_graph_changes(graph_gdf: UrbanGraph, changes: UrbanGraphChanges)
         is_multigraph=graph_gdf.is_multigraph,
         is_directed=graph_gdf.is_directed,
         edge_direction_column=graph_gdf.edge_direction_column,
+        adjacency_weight=graph_gdf.adjacency_weight,
+        crs=graph_gdf.crs,
+        graph_type=graph_gdf.type,
     )

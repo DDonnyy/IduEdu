@@ -67,9 +67,6 @@ def _graph_data_to_urban_graph(
     if graph_nodes_gdf.empty:
         return _empty_public_transport_graph(local_crs)
 
-    graph_nodes_gdf = graph_nodes_gdf.copy()
-    graph_edges_gdf = graph_edges_gdf.copy()
-
     graph_nodes_gdf = gpd.GeoDataFrame(graph_nodes_gdf, geometry="geometry", crs=local_crs)
     missing_node_geometry = graph_nodes_gdf.geometry.isna()
     if missing_node_geometry.any():
@@ -151,8 +148,6 @@ def _graph_data_to_urban_graph(
         if column not in graph_edges_gdf.columns:
             graph_edges_gdf[column] = np.nan
 
-    if "oneway" not in graph_edges_gdf.columns:
-        graph_edges_gdf["oneway"] = ~graph_edges_gdf["type"].astype(str).eq("boarding")
     missing_oneway = graph_edges_gdf["oneway"].isna()
     if missing_oneway.any():
         logger.warning(f"Filling {int(missing_oneway.sum())} PT edges with missing oneway values")

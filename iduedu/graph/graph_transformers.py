@@ -27,7 +27,67 @@ def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:
     return CRS.from_epsg(utm_crs_list[0].code)
 
 
-def simplify_urban_graph_multiedges(
+def to_directed(
+    graph: UrbanGraph,
+    *,
+    edge_direction_column: str = "oneway",
+    default_direction_value: bool = False,
+) -> UrbanGraph:
+    """
+    Return a directed copy of ``UrbanGraph`` using a boolean edge direction column.
+
+    ``default_direction_value=False`` makes existing edges traversable in both
+    directions while still storing the graph as directed for adjacency building.
+    """
+
+    if not isinstance(graph, UrbanGraph):
+        raise TypeError(f"graph must be UrbanGraph, got {type(graph).__name__}")
+
+    edges = graph.edges_gdf.copy()
+    if not edges.empty:
+        if edge_direction_column not in edges.columns:
+            edges[edge_direction_column] = bool(default_direction_value)
+        else:
+            missing_direction = edges[edge_direction_column].isna()
+            if missing_direction.any():
+                edges.loc[missing_direction, edge_direction_column] = bool(default_direction_value)
+            edges[edge_direction_column] = edges[edge_direction_column].astype(bool)
+
+    return UrbanGraph(
+        nodes_gdf=graph.nodes_gdf.copy(),
+        edges_gdf=edges,
+        is_multigraph=graph.is_multigraph,
+        is_directed=True,
+        edge_direction_column=edge_direction_column,
+        adjacency_weight=graph.adjacency_weight,
+        crs=graph.crs,
+        graph_type=graph.type,
+    )
+
+
+def to_undirected(graph: UrbanGraph) -> UrbanGraph:
+    """
+    Return an undirected copy of ``UrbanGraph``.
+
+    Direction columns are kept as regular edge attributes but are not used for
+    adjacency construction.
+    """
+
+    if not isinstance(graph, UrbanGraph):
+        raise TypeError(f"graph must be UrbanGraph, got {type(graph).__name__}")
+
+    return UrbanGraph(
+        nodes_gdf=graph.nodes_gdf.copy(),
+        edges_gdf=graph.edges_gdf.copy(),
+        is_multigraph=graph.is_multigraph,
+        is_directed=False,
+        adjacency_weight=graph.adjacency_weight,
+        crs=graph.crs,
+        graph_type=graph.type,
+    )
+
+
+def simplify_multiedges(
     graph: UrbanGraph, *, weight: str = "time_min", rule: Literal["min", "max"] = "min"
 ) -> UrbanGraph:
     """

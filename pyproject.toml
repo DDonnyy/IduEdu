@@ -1,56 +1,81 @@
-[tool.poetry]
+[project]
 name = "iduedu"
 version = "1.2.1"
-license = "BSD-3-Clause"
 description = "IduEdu is a Python package for the creation and manipulation of complex city networks from OpenStreetMap."
-authors = ["DDonnyy <63115678+DDonnyy@users.noreply.github.com>"]
 readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = "BSD-3-Clause"
+license-files = ["LICENSE.txt"]
+authors = [
+    { name = "DDonnyy", email = "63115678+DDonnyy@users.noreply.github.com" },
+]
+dependencies = [
+    "geopandas>=1.1.0,<2.0.0",
+    "loguru>=0.7.3,<0.8.0",
+    "numba>=0.65.0,<0.66.0",
+    "numpy>=2.4.0,<3.0.0",
+    "pandas>=3.0.0,<4.0.0",
+    "requests>=2.34.0,<3.0.0",
+    "scipy>=1.17.0,<2.0.0",
+    "tqdm>=4.68.0,<5.0.0",
+]
 
-packages = [{ include = "iduedu" }]
-
-[tool.poetry.dependencies]
-python = ">=3.11,<3.13"
-tqdm = "^4.67.0"
-numpy = "^2.2.0"
-pandas = "^2.3.0"
-geopandas = "^1.1.0"
-loguru = "^0.7.3"
-scipy = "^1.16.0"
-numba = "^0.61.0"
-
-
-[tool.poetry.group.dev.dependencies]
-pyarrow = "^19.0.1"
-black = "^25.9.0"
-pylint = "^3.3.5"
-isort = "^6.1.0"
-jupyter = "^1.1.1"
-pre-commit = "^4.3.0"
-# For maps visualization
-folium = "^0.19.5"
-matplotlib = "^3.10.1"
-mapclassify = "^2.8.1"
-contextily = "^1.6.2"
-# tests
-pytest = "^8.3.5"
-pytest-cov = "^6.0.0"
-
-[tool.poetry.group.docs.dependencies]
-sphinx = "^8.0.0"
-furo = "^2025.9.25"
-myst-nb = "^1.1.0"
-sphinx-autodoc-typehints = "^3.2.0"
-sphinx-copybutton = "^0.5.2"
-sphinx-design = "^0.6.0"
+[dependency-groups]
+dev = [
+    { include-group = "docs" },
+    { include-group = "lint" },
+    { include-group = "notebooks" },
+    { include-group = "test" },
+    { include-group = "viz" },
+    "pre-commit>=4.3.0,<5.0.0",
+    "pyarrow>=19.0.1,<20.0.0",
+]
+docs = [
+    "furo>=2025.9.25,<2026.0.0",
+    "myst-nb>=1.1.0,<2.0.0",
+    "sphinx>=8.0.0,<9.0.0",
+    "sphinx-autodoc-typehints>=3.2.0,<4.0.0",
+    "sphinx-copybutton>=0.5.2,<0.6.0",
+    "sphinx-design>=0.6.0,<0.7.0",
+]
+lint = [
+    "black>=25.9.0,<26.0.0",
+    "isort>=6.1.0,<7.0.0",
+    "pylint>=3.3.5,<4.0.0",
+]
+notebooks = [
+    "jupyter>=1.1.1,<2.0.0",
+]
+test = [
+    "pytest>=8.3.5,<9.0.0",
+    "pytest-cov>=6.0.0,<7.0.0",
+]
+viz = [
+    "contextily>=1.6.2,<2.0.0",
+    "folium>=0.19.5,<0.20.0",
+    "mapclassify>=2.8.1,<3.0.0",
+    "matplotlib>=3.10.1,<4.0.0",
+]
 
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling>=1.26.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["iduedu"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/iduedu",
+    "/LICENSE.txt",
+    "/README.md",
+    "/pyproject.toml",
+]
 
 [tool.black]
 line-length = 120
-target-version = ['py310']
+target-version = ['py311']
 
 [tool.pylint.format]
 max-line-length = 120

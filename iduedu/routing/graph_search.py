@@ -16,6 +16,7 @@
 ``np.inf``, а результаты с длинами путей используют разреженные dtype pandas.
 """
 
+import logging
 from typing import Any, Iterable, Literal
 
 import numba as nb
@@ -24,18 +25,18 @@ import pandas as pd
 from scipy import sparse
 
 from iduedu.graph.graph_inputs import resolve_graph_nodes_input
-from iduedu.graph.graph_weights import WEIGHT_SCALE, cutoff_to_int, int_weight_to_float
-from iduedu.graph.numba_graph import coo_rows_to_arrays, sparse_row2numba_matrix
-from iduedu.graph.numba_search import (
+from iduedu.graph.urban_graph import UrbanGraph
+from iduedu.routing.graph_weights import WEIGHT_SCALE, cutoff2int, int_weight2float
+from iduedu.routing.numba_graph import coo_rows_to_arrays, sparse_row2numba_matrix
+from iduedu.routing.numba_search import (
     dijkstra_numba_od_parallel,
-)
-from iduedu.graph.numba_search import dijkstra_numba_path_length_parallel as dijkstra_numba_path_length_parallel_
-from iduedu.graph.numba_search import (
+    dijkstra_numba_path_length_parallel,
     multi_source_dijkstra_numba_nearest_source,
     multi_source_dijkstra_numba_path_length,
     single_source_dijkstra_numba_path_length,
 )
-from iduedu.graph.urban_graph import UrbanGraph
+
+logger = logging.getLogger(__name__)
 
 NODE_INDEX_NAME = "node"
 DIST_COLUMN = "dist"
@@ -122,7 +123,7 @@ def _path_length_series(
 
     reachable_pairs_arr = np.asarray(reachable_pairs, dtype=np.int32)
     return pd.Series(
-        int_weight_to_float(reachable_pairs_arr[:, 1]).astype(dtype),
+        int_weight2float(reachable_pairs_arr[:, 1]).astype(dtype),
         index=pd.Index(pos_to_node[reachable_pairs_arr[:, 0]], name=NODE_INDEX_NAME),
         name=DIST_COLUMN,
     ).astype(pd.SparseDtype(dtype, fill_value=np.inf))
@@ -160,7 +161,7 @@ def single_source_dijkstra_path_length(
     numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=cutoff, reverse=reverse)
     source_pos = _node_positions(urban_graph, [source_node])[0]
     reachable_pairs = single_source_dijkstra_numba_path_length(
-        numba_adj_matrix, np.int32(source_pos), cutoff_to_int(cutoff)
+        numba_adj_matrix, np.int32(source_pos), cutoff2int(cutoff)
     )
     return _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
 
@@ -218,7 +219,7 @@ def multi_source_dijkstra_path_length(
     reachable_pairs = multi_source_dijkstra_numba_path_length(
         numba_adj_matrix,
         source_positions,
-        cutoff_to_int(cutoff),
+        cutoff2int(cutoff),
     )
     result = _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
     result.attrs[SOURCE_NODES_ATTR] = source_nodes_s
@@ -265,7 +266,7 @@ def multi_source_dijkstra_nearest_source(
     source_positions = _node_positions(urban_graph, pd.Index(source_nodes_s.to_numpy()).unique())
     pos_to_node = _pos_to_node_array(urban_graph)
     reachable_triplets = multi_source_dijkstra_numba_nearest_source(
-        numba_adj_matrix, source_positions, cutoff_to_int(cutoff)
+        numba_adj_matrix, source_positions, cutoff2int(cutoff)
     )
 
     if len(reachable_triplets) == 0:
@@ -281,7 +282,7 @@ def multi_source_dijkstra_nearest_source(
         result = pd.DataFrame(
             {
                 SOURCE_NODE_COLUMN: pos_to_node[reachable_triplets_arr[:, 1]],
-                DIST_COLUMN: int_weight_to_float(reachable_triplets_arr[:, 2]).astype(dtype),
+                DIST_COLUMN: int_weight2float(reachable_triplets_arr[:, 2]).astype(dtype),
             },
             index=reachable_index,
         )
@@ -343,7 +344,7 @@ def dijkstra_path_length_parallel(
     if max_workers is not None:
         nb.set_num_threads(max_workers)
 
-    reachable_rows = dijkstra_numba_path_length_parallel_(numba_adj_matrix, source_positions, cutoff_to_int(cutoff))
+    reachable_rows = dijkstra_numba_path_length_parallel(numba_adj_matrix, source_positions, cutoff2int(cutoff))
     rows, cols, values = coo_rows_to_arrays(reachable_rows)
 
     if len(values) > 0:
@@ -357,12 +358,12 @@ def dijkstra_path_length_parallel(
     )
 
     path_matrix = sparse.coo_matrix(
-        (int_weight_to_float(values).astype(dtype), (rows, compact_cols)),
+        (int_weight2float(values).astype(dtype), (rows, compact_cols)),
         shape=(len(source_nodes_s), len(reachable_columns)),
     ).tocsr()
     dense_result = np.full(path_matrix.shape, np.inf, dtype=dtype)
     if len(values) > 0:
-        dense_result[rows, compact_cols] = int_weight_to_float(values).astype(dtype)
+        dense_result[rows, compact_cols] = int_weight2float(values).astype(dtype)
 
     result = pd.DataFrame(
         dense_result,
@@ -373,7 +374,7 @@ def dijkstra_path_length_parallel(
     return result
 
 
-def get_od_matrix(
+def od_matrix(
     urban_graph: UrbanGraph,
     *,
     gdf_origins: pd.DataFrame | None = None,
@@ -430,6 +431,14 @@ def get_od_matrix(
     """
     _validate_max_workers(max_workers)
 
+    if (gdf_origins is not None and graph_node_column not in gdf_origins.columns) or (
+        gdf_destinations is not None and graph_node_column not in gdf_destinations.columns
+    ):
+        logger.info(
+            "OD matrix is calculated between nearest graph nodes. "
+            "For more precise object-to-object distances, project objects into UrbanGraph first."
+        )
+
     origin_nodes_s = resolve_graph_nodes_input(
         urban_graph=urban_graph,
         nodes=origins_nodes,
@@ -473,12 +482,12 @@ def get_od_matrix(
         numba_adj_matrix=csr_adj_matrix,
         origins=origins_pos,
         destinations=destinations_pos,
-        cutoff=cutoff_to_int(threshold),
+        cutoff=cutoff2int(threshold),
     )
 
     rows, cols, values = coo_rows_to_arrays(coo_rows)
     od_matrix = sparse.coo_matrix(
-        (int_weight_to_float(values).astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
+        (int_weight2float(values).astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
     ).tocsr()
 
     if transposed:

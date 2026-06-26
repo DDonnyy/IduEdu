@@ -8,8 +8,8 @@ from shapely.geometry.base import BaseGeometry
 
 from iduedu import (
     clip_nx_graph,
-    gdf_to_graph,
-    graph_to_gdf,
+    gdf2graph,
+    graph2gdf,
     keep_largest_connected_component,
     read_gml,
     reproject_graph,
@@ -50,7 +50,7 @@ def test_keep_largest_scc():
 
 def test_graph_to_gdf_nodes_only(simple_graph_3857):
     G = simple_graph_3857
-    nodes = graph_to_gdf(G, edges=False, nodes=True)
+    nodes = graph2gdf(G, edges=False, nodes=True)
     assert isinstance(nodes, gpd.GeoDataFrame)
     assert len(nodes) == G.number_of_nodes()
     assert nodes.crs == G.graph["crs"]
@@ -58,7 +58,7 @@ def test_graph_to_gdf_nodes_only(simple_graph_3857):
 
 def test_graph_to_gdf_edges_only_restore(simple_graph_3857):
     G = simple_graph_3857
-    edges = graph_to_gdf(G, edges=True, nodes=False, restore_edge_geom=True)
+    edges = graph2gdf(G, edges=True, nodes=False, restore_edge_geom=True)
     assert isinstance(edges, gpd.GeoDataFrame)
     assert (~edges["geometry"].is_empty).all()
 
@@ -67,7 +67,7 @@ def test_graph_to_gdf_no_crs_raises(simple_graph_3857):
     G = simple_graph_3857
     del G.graph["crs"]
     with pytest.raises(ValueError):
-        graph_to_gdf(G)
+        graph2gdf(G)
 
 
 def test_gdf_to_graph_basic():
@@ -76,7 +76,7 @@ def test_gdf_to_graph_basic():
         geometry=[LineString([(30.0, 59.0), (30.001, 59.0)]), LineString([(30.001, 59.0), (30.002, 59.001)])],
         crs=4326,
     )
-    G = gdf_to_graph(gdf, project_gdf_attr=True, reproject_to_utm_crs=True, speed=5, check_intersections=True)
+    G = gdf2graph(gdf, project_gdf_attr=True, reproject_to_utm_crs=True, speed=5, check_intersections=True)
     assert isinstance(G, nx.DiGraph)
     assert G.number_of_edges() >= 2
     any_edge = next(iter(G.edges(data=True)))
@@ -120,6 +120,6 @@ def test_clip_nx_graph(simple_graph_3857):
 
 
 def test_graph_to_gdf_restore_geom_integration(intermodal_graph):
-    graph_gdf = graph_to_gdf(intermodal_graph, restore_edge_geom=True)
+    graph_gdf = graph2gdf(intermodal_graph, restore_edge_geom=True)
     assert graph_gdf is not None
     assert not graph_gdf.empty

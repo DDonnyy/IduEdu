@@ -4,7 +4,7 @@ import numba as nb
 import numpy as np
 from numba.typed import List
 
-from iduedu.graph.numba_graph import UI32CSRMatrix, coo_rows_to_arrays, sparse_row2numba_matrix, ui32csr_type
+from iduedu.routing.numba_graph import UI32CSRMatrix
 
 coo_pair_type = nb.types.UniTuple(nb.int32, 2)
 coo_triplet_type = nb.types.UniTuple(nb.int32, 3)

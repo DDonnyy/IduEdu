@@ -41,6 +41,7 @@ _autosummary/
 # Local dev stuff
 /dev
 /poetry.lock
+/uv.lock
 
 # OS junk
 .DS_Store

@@ -421,7 +421,7 @@ class UrbanGraph:
     ) -> pd.Series:
         """Run single-source Dijkstra shortest path search on this graph."""
 
-        from .graph_search import single_source_dijkstra_path_length
+        from iduedu.routing.graph_search import single_source_dijkstra_path_length
 
         return single_source_dijkstra_path_length(
             self,
@@ -445,7 +445,7 @@ class UrbanGraph:
     ) -> pd.Series:
         """Run multi-source Dijkstra shortest path search on this graph."""
 
-        from .graph_search import multi_source_dijkstra_path_length
+        from iduedu.routing.graph_search import multi_source_dijkstra_path_length
 
         return multi_source_dijkstra_path_length(
             self,
@@ -471,7 +471,7 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Find the nearest source node and distance for each reachable graph node."""
 
-        from .graph_search import multi_source_dijkstra_nearest_source
+        from iduedu.routing.graph_search import multi_source_dijkstra_nearest_source
 
         return multi_source_dijkstra_nearest_source(
             self,
@@ -498,7 +498,7 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Run independent Dijkstra searches for multiple source nodes."""
 
-        from .graph_search import dijkstra_path_length_parallel
+        from iduedu.routing.graph_search import dijkstra_path_length_parallel
 
         return dijkstra_path_length_parallel(
             self,
@@ -512,7 +512,7 @@ class UrbanGraph:
             max_workers=max_workers,
         )
 
-    def get_od_matrix(
+    def od_matrix(
         self,
         *,
         gdf_origins: pd.DataFrame | None = None,
@@ -527,9 +527,9 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Calculate an OD matrix of shortest paths on this graph."""
 
-        from .graph_search import get_od_matrix
+        from iduedu.routing.graph_search import od_matrix
 
-        return get_od_matrix(
+        return od_matrix(
             self,
             gdf_origins=gdf_origins,
             gdf_destinations=gdf_destinations,
@@ -620,9 +620,9 @@ class UrbanGraph:
             Упрощенный ``UrbanGraph``.
         """
 
-        from .graph_transformers import simplify_urban_graph_multiedges
+        from iduedu.graph.graph_transformers import simplify_multiedges
 
-        simplified = simplify_urban_graph_multiedges(self, weight=weight, rule=rule)
+        simplified = simplify_multiedges(self, weight=weight, rule=rule)
         simplified.adjacency_weight = self.adjacency_weight
 
         if not inplace:
@@ -687,8 +687,119 @@ class UrbanGraph:
         self._replace_state_from(clipped)
         return self
 
+    def join(
+        self,
+        other: "UrbanGraph",
+        *,
+        graph_type: str | None = None,
+        node_conflict: str = "left",
+        inplace: bool = False,
+    ) -> "UrbanGraph":
+        """
+        Объединяет текущий граф с другим ``UrbanGraph``.
+
+        Общие индексы узлов допускаются; атрибуты таких узлов выбираются
+        параметром ``node_conflict``. Ребра с одинаковыми ключами ``u/v/k`` для
+        мультиграфа или ``u/v`` для обычного графа считаются конфликтом.
+
+        Функциональный аналог:
+        :func:`lprp.models.graph.graph_editor.join_urban_graphs`.
+
+        Args:
+            other: Второй граф для объединения.
+            graph_type: Тип результирующего графа. Если ``None``, сохраняется
+                тип текущего графа.
+            node_conflict: Какая сторона выигрывает при совпадении индексов
+                узлов: ``"left"`` или ``"right"``.
+            inplace: Если ``True``, текущий объект будет заменен объединенным
+                графом. Если ``False``, будет возвращен новый граф.
+
+        Returns:
+            Объединенный ``UrbanGraph``.
+        """
+
+        from iduedu.graph.graph_editor import join_urban_graphs
+
+        joined = join_urban_graphs(self, other, graph_type=graph_type, node_conflict=node_conflict)
+
+        if not inplace:
+            return joined
+
+        self._replace_state_from(joined)
+        return self
+
+    def to_directed(
+        self,
+        *,
+        edge_direction_column: str = "oneway",
+        default_direction_value: bool = False,
+        inplace: bool = False,
+    ) -> "UrbanGraph":
+        """
+        Возвращает направленную версию графа с булевой колонкой направления.
+
+        Функциональный аналог:
+        :func:`lprp.models.graph.graph_transformers.to_directed`.
+
+        Args:
+            edge_direction_column: Имя колонки односторонности ребра.
+            default_direction_value: Значение для ребер, где колонка
+                отсутствует или содержит пропуск.
+            inplace: Если ``True``, текущий объект будет заменен направленным
+                графом. Если ``False``, будет возвращен новый граф.
+
+        Returns:
+            Направленный ``UrbanGraph``.
+        """
+
+        from iduedu.graph.graph_transformers import to_directed
+
+        directed = to_directed(
+            self,
+            edge_direction_column=edge_direction_column,
+            default_direction_value=default_direction_value,
+        )
+
+        if not inplace:
+            return directed
+
+        self._replace_state_from(directed)
+        return self
+
+    def to_undirected(self, *, inplace: bool = False) -> "UrbanGraph":
+        """
+        Возвращает ненаправленную версию графа.
+
+        Функциональный аналог:
+        :func:`lprp.models.graph.graph_transformers.to_undirected`.
+
+        Args:
+            inplace: Если ``True``, текущий объект будет заменен
+                ненаправленным графом. Если ``False``, будет возвращен новый
+                граф.
+
+        Returns:
+            Ненаправленный ``UrbanGraph``.
+        """
+
+        from .graph_transformers import to_undirected
+
+        undirected = to_undirected(self)
+
+        if not inplace:
+            return undirected
+
+        self._replace_state_from(undirected)
+        return self
+
     def project_objects(
-        self, objects_gdf: gpd.GeoDataFrame, speed_m_per_min: float, *, inplace: bool = False
+        self,
+        objects_gdf: gpd.GeoDataFrame,
+        speed_m_per_min: float,
+        *,
+        max_dist: float | None = None,
+        add_link_edge: bool = True,
+        inplace: bool = False,
     ) -> tuple["UrbanGraph", pd.Series]:
         """
         Добавляет объекты на ближайшие ребра графа.
@@ -715,6 +826,11 @@ class UrbanGraph:
             speed_m_per_min: Скорость движения по соединительным ребрам в
                 метрах в минуту. Для 5 км/ч можно использовать
                 ``5 * 1000 / 60``.
+            max_dist: Максимальная дистанция до ближайшего ребра. Если
+                ``None``, ограничение не применяется.
+            add_link_edge: Если ``True``, создается отдельный узел объекта и
+                соединительное ребро до точки проекции. Если ``False``, объект
+                сопоставляется с точкой проекции на графе.
             inplace: Если ``True``, изменения применяются к текущему графу.
                 Если ``False``, возвращается новый граф.
 
@@ -724,10 +840,16 @@ class UrbanGraph:
             значением - идентификатор добавленного узла графа.
         """
 
-        from .graph_editor import apply_urban_graph_changes, project_objects2urban_graph
+        from iduedu.graph.graph_editor import apply_urban_graph_changes, project_objects2urban_graph
 
         graph = self if inplace else self.copy()
-        changes, object2node_map = project_objects2urban_graph(graph, objects_gdf, speed_m_per_min)
+        changes, object2node_map = project_objects2urban_graph(
+            graph,
+            objects_gdf,
+            speed_m_per_min,
+            max_dist=max_dist,
+            add_link_edge=add_link_edge,
+        )
 
         changed_graph = apply_urban_graph_changes(graph, changes)
         changed_graph.adjacency_weight = graph.adjacency_weight
