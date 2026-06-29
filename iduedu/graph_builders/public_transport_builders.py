@@ -7,13 +7,13 @@ from tqdm.contrib.concurrent import process_map
 
 from iduedu import config
 from iduedu.constants.transport_specs import DEFAULT_REGISTRY, TransportRegistry
-from iduedu.graph.graph_transformers import estimate_crs_for_bounds
+from iduedu.graph.transformers import estimate_crs_for_bounds
 from iduedu.graph.urban_graph import UrbanGraph
-from iduedu.overpass.overpass_downloaders import (
+from iduedu.overpass.downloaders import (
     get_4326_boundary,
     get_routes_by_poly,
 )
-from iduedu.overpass.overpass_parsers import (
+from iduedu.overpass.parsers import (
     overpass_ground_transport2edgenode,
     overpass_routes_to_df,
     overpass_subway2edgenode,

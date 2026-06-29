@@ -134,6 +134,46 @@ def relabel_urban_graph(graph_gdf: UrbanGraph) -> UrbanGraph:
     return relabeled_graph
 
 
+def subgraph_by_nodes(graph_gdf: UrbanGraph, nodes) -> UrbanGraph:
+    """
+    Return an induced ``UrbanGraph`` subgraph for the provided node ids.
+
+    Node ids are preserved. Edges are retained only when both endpoints are in
+    ``nodes``.
+    """
+
+    if not isinstance(graph_gdf, UrbanGraph):
+        raise TypeError(f"graph_gdf must be UrbanGraph, got {type(graph_gdf).__name__}")
+
+    nodes_index = pd.Index(nodes)
+    graph_nodes = graph_gdf.nodes_gdf
+    graph_edges = graph_gdf.edges_gdf
+    missing_nodes = nodes_index.difference(graph_nodes.index)
+
+    if len(missing_nodes) > 0:
+        raise ValueError(f"nodes contain ids absent in graph.nodes_gdf.index: {missing_nodes[:10].tolist()}")
+
+    sub_nodes = graph_nodes.loc[graph_nodes.index.isin(nodes_index)].copy()
+
+    if graph_edges.empty:
+        sub_edges = graph_edges.copy()
+    else:
+        sub_node_ids = sub_nodes.index
+        sub_edges = graph_edges.loc[graph_edges["u"].isin(sub_node_ids) & graph_edges["v"].isin(sub_node_ids)].copy()
+        sub_edges = sub_edges.reset_index(drop=True)
+
+    return UrbanGraph(
+        nodes_gdf=sub_nodes,
+        edges_gdf=sub_edges,
+        is_multigraph=graph_gdf.is_multigraph,
+        is_directed=graph_gdf.is_directed,
+        edge_direction_column=graph_gdf.edge_direction_column,
+        adjacency_weight=graph_gdf.adjacency_weight,
+        crs=graph_gdf.crs,
+        graph_type=graph_gdf.type,
+    )
+
+
 def clip_urban_graph(graph_gdf: UrbanGraph, polygon: BaseGeometry) -> UrbanGraph:
     """
     Clip graph nodes by geometry and keep only edges with retained endpoints.
@@ -633,7 +673,7 @@ def apply_urban_graph_changes(graph_gdf: UrbanGraph, changes: UrbanGraphChanges)
     и ребра, затем возвращает новый ``UrbanGraph``. После применения изменений
     сохраненная матрица смежности считается устаревшей; перед расчетом
     доступности рекомендуется вручную вызвать
-    :meth:`lprp.models.graph.graph.UrbanGraph.update_adjacency_matrix`.
+    :meth:`iduedu.graph.urban_graph.UrbanGraph.update_adjacency_matrix`.
 
     Args:
         graph_gdf: Исходный граф.

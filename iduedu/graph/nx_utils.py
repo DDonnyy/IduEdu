@@ -7,7 +7,7 @@ from shapely import LineString, MultiLineString, Point, Polygon, from_wkt, line_
 from shapely.geometry.base import BaseGeometry
 
 
-def keep_largest_connected_component(graph: nx.Graph, copy: bool = True) -> nx.Graph:
+def keep_largest_nx_component(graph: nx.Graph, copy: bool = True) -> nx.Graph:
     """
     Keep only the largest connected component of a NetworkX graph.
 

@@ -2,7 +2,6 @@
 
 import geopandas as gpd
 import pytest
-from overpass.overpass_downloaders import RequestError
 
 from iduedu import (
     config,
@@ -11,6 +10,7 @@ from iduedu import (
     get_walk_graph,
     join_pt_walk_graph,
 )
+from iduedu.overpass.downloaders import RequestError
 
 config.configure_logging("DEBUG")
 

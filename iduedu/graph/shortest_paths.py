@@ -1,7 +1,7 @@
-"""Базовые алгоритмы поиска по :class:`~lprp.models.graph.UrbanGraph`.
+"""Базовые алгоритмы поиска по :class:`iduedu.graph.urban_graph.UrbanGraph`.
 
 Модуль является тонкой публичной оберткой над numba-реализациями из
-``numba_methods``. Здесь собрана неалгоритмическая подготовка, которую иначе
+``iduedu._numba``. Здесь собрана неалгоритмическая подготовка, которую иначе
 пришлось бы повторять в каждом вызывающем методе:
 
 * проверка ``UrbanGraph`` и выбранной колонки веса;
@@ -24,17 +24,16 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
-from iduedu.graph.graph_inputs import resolve_graph_nodes_input
-from iduedu.graph.urban_graph import UrbanGraph
-from iduedu.routing.graph_weights import WEIGHT_SCALE, cutoff2int, int_weight2float
-from iduedu.routing.numba_graph import coo_rows_to_arrays, sparse_row2numba_matrix
-from iduedu.routing.numba_search import (
+from iduedu._numba.csr import coo_rows_to_arrays, sparse_row2numba_matrix
+from iduedu._numba.shortest_paths import (
     dijkstra_numba_od_parallel,
     dijkstra_numba_path_length_parallel,
     multi_source_dijkstra_numba_nearest_source,
     multi_source_dijkstra_numba_path_length,
     single_source_dijkstra_numba_path_length,
 )
+from iduedu.graph.graph_inputs import resolve_graph_nodes_input
+from iduedu.graph.urban_graph import UrbanGraph
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +41,22 @@ NODE_INDEX_NAME = "node"
 DIST_COLUMN = "dist"
 SOURCE_NODE_COLUMN = "source_node"
 SOURCE_NODES_ATTR = "source_nodes"
+
+WEIGHT_SCALE = 100.0
+
+
+def _int_weight2float(value) -> np.ndarray | float:
+    """Возвращает вес из целочисленного формата numba в исходные единицы."""
+
+    return value.astype(float) / WEIGHT_SCALE if hasattr(value, "astype") else float(value) / WEIGHT_SCALE
+
+
+def _cutoff2int(weight_value_cutoff: float | None) -> np.int32:
+    """Переводит ограничение поиска в формат numba; ``None`` означает без ограничения."""
+
+    if weight_value_cutoff is None:
+        return np.int32(np.iinfo(np.int32).max)
+    return np.int32(round(float(weight_value_cutoff) * WEIGHT_SCALE))
 
 
 def _validate_max_workers(max_workers: int | None) -> None:
@@ -123,7 +138,7 @@ def _path_length_series(
 
     reachable_pairs_arr = np.asarray(reachable_pairs, dtype=np.int32)
     return pd.Series(
-        int_weight2float(reachable_pairs_arr[:, 1]).astype(dtype),
+        _int_weight2float(reachable_pairs_arr[:, 1]).astype(dtype),
         index=pd.Index(pos_to_node[reachable_pairs_arr[:, 0]], name=NODE_INDEX_NAME),
         name=DIST_COLUMN,
     ).astype(pd.SparseDtype(dtype, fill_value=np.inf))
@@ -161,7 +176,7 @@ def single_source_dijkstra_path_length(
     numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=cutoff, reverse=reverse)
     source_pos = _node_positions(urban_graph, [source_node])[0]
     reachable_pairs = single_source_dijkstra_numba_path_length(
-        numba_adj_matrix, np.int32(source_pos), cutoff2int(cutoff)
+        numba_adj_matrix, np.int32(source_pos), _cutoff2int(cutoff)
     )
     return _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
 
@@ -219,7 +234,7 @@ def multi_source_dijkstra_path_length(
     reachable_pairs = multi_source_dijkstra_numba_path_length(
         numba_adj_matrix,
         source_positions,
-        cutoff2int(cutoff),
+        _cutoff2int(cutoff),
     )
     result = _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
     result.attrs[SOURCE_NODES_ATTR] = source_nodes_s
@@ -266,7 +281,7 @@ def multi_source_dijkstra_nearest_source(
     source_positions = _node_positions(urban_graph, pd.Index(source_nodes_s.to_numpy()).unique())
     pos_to_node = _pos_to_node_array(urban_graph)
     reachable_triplets = multi_source_dijkstra_numba_nearest_source(
-        numba_adj_matrix, source_positions, cutoff2int(cutoff)
+        numba_adj_matrix, source_positions, _cutoff2int(cutoff)
     )
 
     if len(reachable_triplets) == 0:
@@ -282,7 +297,7 @@ def multi_source_dijkstra_nearest_source(
         result = pd.DataFrame(
             {
                 SOURCE_NODE_COLUMN: pos_to_node[reachable_triplets_arr[:, 1]],
-                DIST_COLUMN: int_weight2float(reachable_triplets_arr[:, 2]).astype(dtype),
+                DIST_COLUMN: _int_weight2float(reachable_triplets_arr[:, 2]).astype(dtype),
             },
             index=reachable_index,
         )
@@ -344,7 +359,7 @@ def dijkstra_path_length_parallel(
     if max_workers is not None:
         nb.set_num_threads(max_workers)
 
-    reachable_rows = dijkstra_numba_path_length_parallel(numba_adj_matrix, source_positions, cutoff2int(cutoff))
+    reachable_rows = dijkstra_numba_path_length_parallel(numba_adj_matrix, source_positions, _cutoff2int(cutoff))
     rows, cols, values = coo_rows_to_arrays(reachable_rows)
 
     if len(values) > 0:
@@ -358,12 +373,12 @@ def dijkstra_path_length_parallel(
     )
 
     path_matrix = sparse.coo_matrix(
-        (int_weight2float(values).astype(dtype), (rows, compact_cols)),
+        (_int_weight2float(values).astype(dtype), (rows, compact_cols)),
         shape=(len(source_nodes_s), len(reachable_columns)),
     ).tocsr()
     dense_result = np.full(path_matrix.shape, np.inf, dtype=dtype)
     if len(values) > 0:
-        dense_result[rows, compact_cols] = int_weight2float(values).astype(dtype)
+        dense_result[rows, compact_cols] = _int_weight2float(values).astype(dtype)
 
     result = pd.DataFrame(
         dense_result,
@@ -398,7 +413,7 @@ def od_matrix(
 
     Если в ``UrbanGraph`` еще нет актуальной матрицы смежности с выбранным
     весом, функция вызовет
-    :meth:`lprp.models.graph.graph.UrbanGraph.update_adjacency_matrix`
+    :meth:`iduedu.graph.urban_graph.UrbanGraph.update_adjacency_matrix`
     автоматически. Для сервиса лучше делать это явно после изменения графа,
     чтобы контролировать тяжелый этап подготовки.
 
@@ -482,12 +497,12 @@ def od_matrix(
         numba_adj_matrix=csr_adj_matrix,
         origins=origins_pos,
         destinations=destinations_pos,
-        cutoff=cutoff2int(threshold),
+        cutoff=_cutoff2int(threshold),
     )
 
     rows, cols, values = coo_rows_to_arrays(coo_rows)
     od_matrix = sparse.coo_matrix(
-        (int_weight2float(values).astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
+        (_int_weight2float(values).astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
     ).tocsr()
 
     if transposed:

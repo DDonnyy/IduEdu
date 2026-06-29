@@ -12,7 +12,7 @@ from shapely import LineString, MultiPolygon, Polygon, unary_union
 from shapely.ops import polygonize
 
 from iduedu import config
-from iduedu.overpass.overpass_cache import cache_load, cache_save_async
+from iduedu.overpass.cache import cache_load, cache_save_async
 
 logger = config.logger
 

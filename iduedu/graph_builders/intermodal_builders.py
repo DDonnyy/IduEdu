@@ -6,11 +6,12 @@ import pandas as pd
 from shapely import MultiPolygon, Polygon
 
 from iduedu import config
-from iduedu.graph.graph_editor import apply_urban_graph_changes, project_objects2urban_graph
+from iduedu.graph.editors import apply_urban_graph_changes, project_objects2urban_graph
+from iduedu.graph.transformers import keep_largest_connected_component
 from iduedu.graph.urban_graph import UrbanGraph
 from iduedu.graph_builders.drive_walk_builders import get_walk_graph
 from iduedu.graph_builders.public_transport_builders import get_public_transport_graph
-from iduedu.overpass.overpass_downloaders import get_4326_boundary
+from iduedu.overpass.downloaders import get_4326_boundary
 
 logger = config.logger
 
@@ -178,9 +179,8 @@ def join_pt_walk_graph(
         graph_type="intermodal",
     )
 
-    # TODO: restore largest-component filtering after UrbanGraph component utilities are implemented.
-    _ = keep_largest_subgraph
-
+    if keep_largest_subgraph:
+        intermodal = keep_largest_connected_component(intermodal)
     logger.debug("Done composing intermodal UrbanGraph.")
     return intermodal
 

@@ -5,6 +5,15 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+from iduedu.graph.adjacency import build_adjacency_matrix
+from iduedu.graph.validation import (
+    gdf_crs,
+    sync_graph_crs,
+    validate_edges,
+    validate_nodes,
+    validate_nodes_edges,
+)
+
 
 class UrbanGraph:
     """
@@ -120,97 +129,19 @@ class UrbanGraph:
 
     @staticmethod
     def _gdf_crs(frame) -> Any | None:
-        if not isinstance(frame, gpd.GeoDataFrame):
-            return None
-        try:
-            return frame.crs
-        except AttributeError:
-            return None
+        return gdf_crs(frame)
 
     def _sync_crs(self) -> None:
-        nodes_crs = self._gdf_crs(self.nodes_gdf)
-        edges_crs = self._gdf_crs(self.edges_gdf)
-        inferred_crs = self.crs or nodes_crs or edges_crs
-
-        if inferred_crs is None:
-            self.crs = None
-            return
-
-        for name, frame_crs in (("nodes_gdf", nodes_crs), ("edges_gdf", edges_crs)):
-            if frame_crs is not None and frame_crs != inferred_crs:
-                raise ValueError(f"{name}.crs={frame_crs} does not match graph crs={inferred_crs}")
-
-        if isinstance(self.nodes_gdf, gpd.GeoDataFrame) and nodes_crs is None and self.nodes_gdf.active_geometry_name:
-            self.nodes_gdf = self.nodes_gdf.set_crs(inferred_crs)
-        if isinstance(self.edges_gdf, gpd.GeoDataFrame) and edges_crs is None and self.edges_gdf.active_geometry_name:
-            self.edges_gdf = self.edges_gdf.set_crs(inferred_crs)
-
-        self.crs = inferred_crs
+        sync_graph_crs(self)
 
     def _validate_nodes(self) -> None:
-        nodes = self.nodes_gdf
-        if not isinstance(nodes, (gpd.GeoDataFrame, pd.DataFrame)):
-            raise TypeError(f"nodes_gdf must be DataFrame or GeoDataFrame, got {type(nodes).__name__}")
-        if nodes.index.has_duplicates:
-            raise ValueError("nodes_gdf.index must be unique")
-        if isinstance(nodes, gpd.GeoDataFrame):
-            if nodes.geometry.isna().any():
-                raise ValueError("nodes_gdf.geometry contains NaN")
-            if (~nodes.geometry.geom_type.isin(["Point"])).any():
-                raise ValueError("All nodes_gdf geometries must be Point")
+        validate_nodes(self)
 
     def _validate_edges(self) -> None:
-        edges = self.edges_gdf
-        if not isinstance(edges, (gpd.GeoDataFrame, pd.DataFrame)):
-            raise TypeError(f"edges_gdf must be DataFrame or GeoDataFrame, got {type(edges).__name__}")
-        if edges.empty:
-            return
-        required = {"u", "v", "geometry", "length_meter", "time_min"}
-        missing = required - set(edges.columns)
-        if missing:
-            raise ValueError(f"edges_gdf missing required columns: {sorted(missing)}")
-        if edges[["u", "v"]].isna().any().any():
-            raise ValueError("edges_gdf columns ['u', 'v'] must not contain NaN")
-        if self.edge_direction_column is not None:
-            if self.edge_direction_column not in edges.columns:
-                raise ValueError(f"edges_gdf missing edge_direction_column {self.edge_direction_column!r}")
-            if edges[self.edge_direction_column].isna().any():
-                raise ValueError(f"edges_gdf[{self.edge_direction_column!r}] contains NaN")
-            values = set(edges[self.edge_direction_column].dropna().unique())
-            if not values <= {False, True, 0, 1}:
-                raise ValueError(f"edges_gdf[{self.edge_direction_column!r}] must contain only boolean values")
-        if self.is_multigraph:
-            if "k" not in edges.columns:
-                raise ValueError("edges_gdf must contain 'k' for multigraph")
-            if edges[["u", "v", "k"]].duplicated().any():
-                raise ValueError("edges_gdf must have unique ['u','v','k']")
-        else:
-            if edges[["u", "v"]].duplicated().any():
-                raise ValueError("edges_gdf must have unique ['u','v'] for non-multigraph")
-        if isinstance(edges, gpd.GeoDataFrame):
-            if edges.geometry.isna().any():
-                raise ValueError("edges_gdf.geometry contains NaN")
-            if (~edges.geometry.geom_type.isin(["LineString"])).any():
-                raise ValueError("All edges_gdf geometries must be LineString")
+        validate_edges(self)
 
     def _validate_nodes_edges(self) -> None:
-        nodes = self.nodes_gdf
-        edges = self.edges_gdf
-
-        if isinstance(nodes, gpd.GeoDataFrame) and isinstance(edges, gpd.GeoDataFrame):
-            nodes_crs = self._gdf_crs(nodes)
-            edges_crs = self._gdf_crs(edges)
-            if nodes_crs is not None and edges_crs is not None and nodes_crs != edges_crs:
-                raise ValueError(f"nodes and edges crs mismatch: nodes.crs={nodes_crs}, edges.crs={edges_crs}")
-
-        if edges.empty:
-            return
-
-        edge_nodes = pd.Index(pd.concat([edges["u"], edges["v"]], ignore_index=True).unique())
-        missing_nodes = edge_nodes.difference(nodes.index)
-
-        if not missing_nodes.empty:
-            raise ValueError(f"Some edge endpoints are missing in nodes_gdf.index: {missing_nodes.tolist()[:10]}")
+        validate_nodes_edges(self)
 
     def _validate(self) -> None:
         self._validate_nodes()
@@ -266,63 +197,7 @@ class UrbanGraph:
     def _build_adjacency_matrix(
         self, *, nodelist: Iterable[Any], weight: str, multigraph_rule: Literal["min", "max"] = "min"
     ) -> sparse.csr_matrix:
-        nodelist = list(nodelist)
-
-        if len(nodelist) == 0:
-            return sparse.csr_matrix((0, 0))
-        if self.edges_gdf.empty:
-            return sparse.csr_matrix((len(nodelist), len(nodelist)))
-        if weight not in self.edges_gdf.columns:
-            raise KeyError(f"edges_gdf has no weight column {weight!r}")
-        if self.edges_gdf[weight].isna().any():
-            raise ValueError(f"edges_gdf[{weight!r}] contains NaN")
-        if multigraph_rule not in {"min", "max"}:
-            raise ValueError(f"Unsupported multigraph_rule={multigraph_rule!r}")
-
-        node_to_pos = {node: i for i, node in enumerate(nodelist)}
-
-        edges = self.edges_gdf
-        mask = edges["u"].isin(nodelist) & edges["v"].isin(nodelist)
-        edge_cols = ["u", "v", weight]
-        if self.edge_direction_column is not None:
-            edge_cols.append(self.edge_direction_column)
-        edges = edges.loc[mask, edge_cols].copy()
-
-        if self.edge_direction_column is not None:
-            forward_edges = edges[["u", "v", weight]].rename(columns={"u": "source", "v": "target"})
-            reverse_edges = edges.loc[~edges[self.edge_direction_column].astype(bool), ["u", "v", weight]].rename(
-                columns={"v": "source", "u": "target"}
-            )
-            graph_edges = pd.concat([forward_edges, reverse_edges], ignore_index=True)
-            graph_edges = graph_edges.groupby(["source", "target"], as_index=False, sort=False)[weight].agg(
-                multigraph_rule
-            )
-            u = graph_edges["source"].to_numpy()
-            v = graph_edges["target"].to_numpy()
-            w = graph_edges[weight].to_numpy()
-        elif self.is_multigraph:
-            edges = edges.groupby(["u", "v"], as_index=False, sort=False)[weight].agg(multigraph_rule)
-            u = edges["u"].to_numpy()
-            v = edges["v"].to_numpy()
-            w = edges[weight].to_numpy()
-        else:
-            u = edges["u"].to_numpy()
-            v = edges["v"].to_numpy()
-            w = edges[weight].to_numpy()
-
-        row = np.fromiter((node_to_pos[x] for x in u), dtype=np.int64, count=len(u))
-        col = np.fromiter((node_to_pos[x] for x in v), dtype=np.int64, count=len(v))
-
-        if self.edge_direction_column is None and not self.is_directed:
-            row, col = np.concatenate([row, col]), np.concatenate([col, row])
-            data = np.concatenate([w, w])
-        else:
-            data = w
-
-        return sparse.coo_matrix(
-            (data, (row, col)),
-            shape=(len(nodelist), len(nodelist)),
-        ).tocsr()
+        return build_adjacency_matrix(self, nodelist=nodelist, weight=weight, multigraph_rule=multigraph_rule)
 
     def update_adjacency_matrix(
         self,
@@ -410,6 +285,59 @@ class UrbanGraph:
 
         return self._build_adjacency_matrix(nodelist=nodelist, weight=weight, multigraph_rule=multigraph_rule)
 
+    def connected_components(self) -> list[set[Any]]:
+        """Return connected components for an undirected graph."""
+
+        from iduedu.graph.components import connected_components
+
+        return connected_components(self)
+
+    def weakly_connected_components(self) -> list[set[Any]]:
+        """Return weakly connected components, ignoring edge direction."""
+
+        from iduedu.graph.components import weakly_connected_components
+
+        return weakly_connected_components(self)
+
+    def strongly_connected_components(self) -> list[set[Any]]:
+        """Return strongly connected components."""
+
+        from iduedu.graph.components import strongly_connected_components
+
+        return strongly_connected_components(self)
+
+    def largest_component(self, *, mode: Literal["auto", "connected", "weak", "strong"] = "auto") -> set[Any]:
+        """Return the largest component according to the selected mode."""
+
+        from iduedu.graph.components import largest_component
+
+        return largest_component(self, mode=mode)
+
+    def subgraph_by_nodes(self, nodes: Iterable[Any]) -> "UrbanGraph":
+        """Return the node-induced subgraph for ``nodes``."""
+
+        from iduedu.graph.editors import subgraph_by_nodes
+
+        return subgraph_by_nodes(self, nodes)
+
+    def keep_largest_connected_component(
+        self,
+        *,
+        mode: Literal["auto", "connected", "weak", "strong"] = "auto",
+        inplace: bool = False,
+    ) -> "UrbanGraph":
+        """Keep only the largest graph component."""
+
+        from iduedu.graph.transformers import keep_largest_connected_component
+
+        filtered = keep_largest_connected_component(self, mode=mode)
+
+        if not inplace:
+            return filtered
+
+        self._replace_state_from(filtered)
+        return self
+
     def single_source_dijkstra_path_length(
         self,
         source_node: Any,
@@ -421,7 +349,7 @@ class UrbanGraph:
     ) -> pd.Series:
         """Run single-source Dijkstra shortest path search on this graph."""
 
-        from iduedu.routing.graph_search import single_source_dijkstra_path_length
+        from iduedu.graph.shortest_paths import single_source_dijkstra_path_length
 
         return single_source_dijkstra_path_length(
             self,
@@ -445,7 +373,7 @@ class UrbanGraph:
     ) -> pd.Series:
         """Run multi-source Dijkstra shortest path search on this graph."""
 
-        from iduedu.routing.graph_search import multi_source_dijkstra_path_length
+        from iduedu.graph.shortest_paths import multi_source_dijkstra_path_length
 
         return multi_source_dijkstra_path_length(
             self,
@@ -471,7 +399,7 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Find the nearest source node and distance for each reachable graph node."""
 
-        from iduedu.routing.graph_search import multi_source_dijkstra_nearest_source
+        from iduedu.graph.shortest_paths import multi_source_dijkstra_nearest_source
 
         return multi_source_dijkstra_nearest_source(
             self,
@@ -498,7 +426,7 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Run independent Dijkstra searches for multiple source nodes."""
 
-        from iduedu.routing.graph_search import dijkstra_path_length_parallel
+        from iduedu.graph.shortest_paths import dijkstra_path_length_parallel
 
         return dijkstra_path_length_parallel(
             self,
@@ -527,7 +455,7 @@ class UrbanGraph:
     ) -> pd.DataFrame:
         """Calculate an OD matrix of shortest paths on this graph."""
 
-        from iduedu.routing.graph_search import od_matrix
+        from iduedu.graph.shortest_paths import od_matrix
 
         return od_matrix(
             self,
@@ -558,7 +486,7 @@ class UrbanGraph:
         например IduEdu, если они уже содержат координаты узлов, CRS и
         атрибуты ребер ``length_meter`` и ``time_min``. Фактическое
         преобразование выполняет
-        :func:`lprp.models.graph.graph_transformers.nx_graph2urban_graph`.
+        :func:`iduedu.graph.adapters.nx_graph2urban_graph`.
 
         Args:
             nx_graph: Объект ``networkx.Graph``, ``networkx.DiGraph``,
@@ -587,7 +515,7 @@ class UrbanGraph:
         """
         Преобразует ``UrbanGraph`` в граф NetworkX.
 
-        Метод вызывает :func:`lprp.models.graph.graph_transformers.urban_graph2nx_graph`
+        Метод вызывает :func:`iduedu.graph.adapters.urban_graph2nx_graph`
         и сохраняет атрибуты ребер и узлов в формате NetworkX.
 
         Returns:
@@ -608,7 +536,7 @@ class UrbanGraph:
         Для каждой пары узлов выбирается одно ребро по колонке ``weight``.
         Правило ``min`` оставляет ребро с минимальным весом, ``max`` - с
         максимальным. Подробная функция:
-        :func:`lprp.models.graph.graph_transformers.simplify_urban_graph_multiedges`.
+        :func:`iduedu.graph.transformers.simplify_multiedges`.
 
         Args:
             weight: Колонка веса для выбора ребра.
@@ -620,7 +548,7 @@ class UrbanGraph:
             Упрощенный ``UrbanGraph``.
         """
 
-        from iduedu.graph.graph_transformers import simplify_multiedges
+        from iduedu.graph.transformers import simplify_multiedges
 
         simplified = simplify_multiedges(self, weight=weight, rule=rule)
         simplified.adjacency_weight = self.adjacency_weight
@@ -636,7 +564,7 @@ class UrbanGraph:
         Перенумеровывает узлы графа в плотный ``RangeIndex``.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_editor.relabel_urban_graph`.
+        :func:`iduedu.graph.editors.relabel_urban_graph`.
 
         Args:
             inplace: Если ``True``, текущий объект будет заменен
@@ -647,7 +575,7 @@ class UrbanGraph:
             ``UrbanGraph`` с обновленными индексами узлов и концами ребер.
         """
 
-        from .graph_editor import relabel_urban_graph
+        from .editors import relabel_urban_graph
 
         relabeled = relabel_urban_graph(self)
 
@@ -666,7 +594,7 @@ class UrbanGraph:
         :meth:`relabel`.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_editor.clip_urban_graph`.
+        :func:`iduedu.graph.editors.clip_urban_graph`.
 
         Args:
             polygon: Геометрия Shapely в CRS графа.
@@ -677,7 +605,7 @@ class UrbanGraph:
             Обрезанный ``UrbanGraph``.
         """
 
-        from .graph_editor import clip_urban_graph
+        from .editors import clip_urban_graph
 
         clipped = clip_urban_graph(self, polygon)
 
@@ -703,7 +631,7 @@ class UrbanGraph:
         мультиграфа или ``u/v`` для обычного графа считаются конфликтом.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_editor.join_urban_graphs`.
+        :func:`iduedu.graph.editors.join_urban_graphs`.
 
         Args:
             other: Второй граф для объединения.
@@ -718,7 +646,7 @@ class UrbanGraph:
             Объединенный ``UrbanGraph``.
         """
 
-        from iduedu.graph.graph_editor import join_urban_graphs
+        from iduedu.graph.editors import join_urban_graphs
 
         joined = join_urban_graphs(self, other, graph_type=graph_type, node_conflict=node_conflict)
 
@@ -739,7 +667,7 @@ class UrbanGraph:
         Возвращает направленную версию графа с булевой колонкой направления.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_transformers.to_directed`.
+        :func:`iduedu.graph.transformers.to_directed`.
 
         Args:
             edge_direction_column: Имя колонки односторонности ребра.
@@ -752,7 +680,7 @@ class UrbanGraph:
             Направленный ``UrbanGraph``.
         """
 
-        from iduedu.graph.graph_transformers import to_directed
+        from iduedu.graph.transformers import to_directed
 
         directed = to_directed(
             self,
@@ -771,7 +699,7 @@ class UrbanGraph:
         Возвращает ненаправленную версию графа.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_transformers.to_undirected`.
+        :func:`iduedu.graph.transformers.to_undirected`.
 
         Args:
             inplace: Если ``True``, текущий объект будет заменен
@@ -782,7 +710,7 @@ class UrbanGraph:
             Ненаправленный ``UrbanGraph``.
         """
 
-        from .graph_transformers import to_undirected
+        from .transformers import to_undirected
 
         undirected = to_undirected(self)
 
@@ -812,13 +740,13 @@ class UrbanGraph:
 
         Для backend-сервиса, где изменения графа нужно сохранить в БД, обычно
         удобнее напрямую использовать
-        :func:`lprp.models.graph.graph_editor.project_objects2urban_graph`.
+        :func:`iduedu.graph.editors.project_objects2urban_graph`.
         Этот метод является оберткой, которая сразу применяет изменения к
         локальной копии графа.
 
         Функциональный аналог:
-        :func:`lprp.models.graph.graph_editor.project_objects2urban_graph` +
-        :func:`lprp.models.graph.graph_editor.apply_urban_graph_changes`.
+        :func:`iduedu.graph.editors.project_objects2urban_graph` +
+        :func:`iduedu.graph.editors.apply_urban_graph_changes`.
 
         Args:
             objects_gdf: Объекты с уникальным индексом и геометрией. Индекс
@@ -840,7 +768,7 @@ class UrbanGraph:
             значением - идентификатор добавленного узла графа.
         """
 
-        from iduedu.graph.graph_editor import apply_urban_graph_changes, project_objects2urban_graph
+        from iduedu.graph.editors import apply_urban_graph_changes, project_objects2urban_graph
 
         graph = self if inplace else self.copy()
         changes, object2node_map = project_objects2urban_graph(

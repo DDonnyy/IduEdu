@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 import numpy as np
@@ -6,7 +7,11 @@ from pyproj import CRS
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 
+from iduedu.graph.components import largest_component
+from iduedu.graph.editors import subgraph_by_nodes
 from iduedu.graph.urban_graph import UrbanGraph
+
+logger = logging.getLogger(__name__)
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:
@@ -25,6 +30,39 @@ def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:
         ),
     )
     return CRS.from_epsg(utm_crs_list[0].code)
+
+
+def keep_largest_connected_component(
+    graph: UrbanGraph,
+    *,
+    mode: Literal["auto", "connected", "weak", "strong"] = "auto",
+) -> UrbanGraph:
+    """
+    Keep only the largest component of an ``UrbanGraph``.
+
+    With ``mode="auto"``, directed graphs use the largest strongly connected
+    component and undirected graphs use the largest connected component.
+    """
+
+    if not isinstance(graph, UrbanGraph):
+        raise TypeError(f"graph must be UrbanGraph, got {type(graph).__name__}")
+
+    component = largest_component(graph, mode=mode)
+    if len(component) == len(graph.nodes_gdf):
+        return graph.copy()
+
+    component_name = {
+        "auto": "strongly connected" if graph.is_directed else "connected",
+        "connected": "connected",
+        "weak": "weakly connected",
+        "strong": "strongly connected",
+    }[mode]
+    removed = len(graph.nodes_gdf) - len(component)
+    logger.warning(
+        f"Removing {removed} nodes outside the largest {component_name} component. "
+        f"Retaining {len(component)} of {len(graph.nodes_gdf)} nodes."
+    )
+    return subgraph_by_nodes(graph, component)
 
 
 def to_directed(
@@ -95,7 +133,7 @@ def simplify_multiedges(
 
     Для каждой пары узлов выбирается одно ребро по весу ``weight``. Правило
     ``min`` оставляет ребро с минимальным весом, ``max`` - с максимальным.
-    Метод :meth:`lprp.models.graph.graph.UrbanGraph.simplify_multiedges`
+    Метод :meth:`iduedu.graph.urban_graph.UrbanGraph.simplify_multiedges`
     вызывает эту функцию внутри.
 
     Args:

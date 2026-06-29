@@ -50,7 +50,7 @@ def nx_graph2urban_graph(
         oneway_column: Имя булевой колонки односторонности ребра.
 
     Returns:
-        Экземпляр :class:`lprp.models.graph.graph.UrbanGraph`.
+        Экземпляр :class:`iduedu.graph.urban_graph.UrbanGraph`.
 
     Raises:
         TypeError: Если передан не NetworkX-граф.

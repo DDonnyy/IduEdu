@@ -10,9 +10,9 @@ from shapely.geometry.multipolygon import MultiPolygon
 from iduedu import config
 from iduedu.constants.highway_enums import HighwayType
 from iduedu.constants.network_enums import Network
-from iduedu.graph.graph_transformers import estimate_crs_for_bounds
+from iduedu.graph.transformers import estimate_crs_for_bounds, keep_largest_connected_component
 from iduedu.graph.urban_graph import UrbanGraph
-from iduedu.overpass.overpass_downloaders import get_4326_boundary, get_network_by_filters
+from iduedu.overpass.downloaders import get_4326_boundary, get_network_by_filters
 
 logger = config.logger
 
@@ -335,12 +335,7 @@ def get_drive_graph(
         edge_attr_cols.add("category")
     edges_gdf = edges_gdf[[col for col in edges_gdf.columns if col in edge_attr_cols]].copy()
 
-    # TODO: restore largest-component filtering after UrbanGraph component utilities are implemented.
-    # if keep_largest_subgraph:
-    #     graph = keep_largest_connected_component(graph)
-
-    logger.debug("Drive graph built.")
-    return UrbanGraph(
+    graph = UrbanGraph(
         nodes_gdf=nodes_gdf,
         edges_gdf=edges_gdf,
         is_multigraph=True,
@@ -349,6 +344,10 @@ def get_drive_graph(
         crs=local_crs,
         graph_type=network_type,
     )
+    if keep_largest_subgraph:
+        graph = keep_largest_connected_component(graph)
+    logger.debug("Drive graph built.")
+    return graph
 
 
 def get_walk_graph(
@@ -448,12 +447,7 @@ def get_walk_graph(
     edge_attrs = set(needed_tags) | {"u", "v", "k", "geometry", "length_meter", "time_min", "type"}
     edges_gdf = edges_gdf[[col for col in edges_gdf.columns if col in edge_attrs]].copy()
 
-    # TODO: restore largest-component filtering after UrbanGraph component utilities are implemented.
-    # if keep_largest_subgraph:
-    #     graph = keep_largest_connected_component(graph)
-
-    logger.debug("Walk graph built.")
-    return UrbanGraph(
+    graph = UrbanGraph(
         nodes_gdf=nodes_gdf,
         edges_gdf=edges_gdf,
         is_multigraph=True,
@@ -461,3 +455,7 @@ def get_walk_graph(
         crs=local_crs,
         graph_type=network_type,
     )
+    if keep_largest_subgraph:
+        graph = keep_largest_connected_component(graph)
+    logger.debug("Walk graph built.")
+    return graph

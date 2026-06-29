@@ -13,7 +13,7 @@ from shapely import LineString, MultiLineString, Point, line_merge
 from shapely.ops import substring
 
 from iduedu.constants.highway_enums import HighwayType
-from iduedu.overpass.overpass_downloaders import fetch_member_tags
+from iduedu.overpass.downloaders import fetch_member_tags
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
