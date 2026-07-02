@@ -69,6 +69,8 @@ class UrbanGraph:
         crs: Any | None = None,
         graph_type: str | None = None,
     ):
+        """Initialize graph tables, topology flags and adjacency cache state."""
+
         self.nodes_gdf = nodes_gdf
         self.edges_gdf = edges_gdf
         self.crs = crs
@@ -477,27 +479,23 @@ class UrbanGraph:
         check_oneway: bool = True,
         oneway_column: str = "oneway",
     ) -> "UrbanGraph":
-        """
-        Создает ``UrbanGraph`` из графа NetworkX.
+        """Create an ``UrbanGraph`` from a NetworkX graph.
 
-        Этот конструктор полезен для графов, полученных из внешних библиотек,
-        например IduEdu, если они уже содержат координаты узлов, CRS и
-        атрибуты ребер ``length_meter`` и ``time_min``. Фактическое
-        преобразование выполняет
+        This constructor is useful for graphs received from external libraries when
+        they already contain node coordinates, CRS metadata and edge attributes such as
+        ``length_meter`` and ``time_min``. The conversion itself is performed by
         :func:`iduedu.graph.adapters.nx_graph2urban_graph`.
 
         Args:
-            nx_graph: Объект ``networkx.Graph``, ``networkx.DiGraph``,
-                ``networkx.MultiGraph`` или ``networkx.MultiDiGraph``.
-            restore_edge_geom: Если ``True``, пустая геометрия ребра будет
-                восстановлена прямым отрезком между узлами.
-            check_oneway: Если ``True`` и в ребрах есть колонка
-                ``oneway_column``, она будет использована для
-                частично направленной матрицы смежности.
-            oneway_column: Имя булевой колонки односторонности ребра.
+            nx_graph: NetworkX graph, directed graph, multigraph or multidigraph.
+            restore_edge_geom: If ``True``, empty edge geometries are restored as
+                straight segments between endpoint nodes.
+            check_oneway: If ``True`` and ``oneway_column`` exists on edges, that column
+                is used as the edge direction column.
+            oneway_column: Boolean edge attribute that marks one-way movement.
 
         Returns:
-            Экземпляр ``UrbanGraph``.
+            Converted ``UrbanGraph`` instance.
         """
 
         from .adapters import nx_graph2urban_graph
@@ -510,15 +508,13 @@ class UrbanGraph:
         )
 
     def to_nx_graph(self):
-        """
-        Преобразует ``UrbanGraph`` в граф NetworkX.
+        """Convert this graph to a NetworkX graph.
 
-        Метод вызывает :func:`iduedu.graph.adapters.urban_graph2nx_graph`
-        и сохраняет атрибуты ребер и узлов в формате NetworkX.
+        The method delegates to :func:`iduedu.graph.adapters.urban_graph2nx_graph` and
+        preserves node and edge attributes where possible.
 
         Returns:
-            ``networkx.Graph``, ``networkx.DiGraph``, ``networkx.MultiGraph``
-            или ``networkx.MultiDiGraph`` в зависимости от флагов графа.
+            NetworkX graph type matching this graph topology.
         """
 
         from .adapters import urban_graph2nx_graph
@@ -528,22 +524,19 @@ class UrbanGraph:
     def simplify_multiedges(
         self, *, weight: str = "time_min", rule: Literal["min", "max"] = "min", inplace: bool = False
     ) -> "UrbanGraph":
-        """
-        Схлопывает мультиграф до обычного графа.
+        """Collapse a multigraph to a simple graph.
 
-        Для каждой пары узлов выбирается одно ребро по колонке ``weight``.
-        Правило ``min`` оставляет ребро с минимальным весом, ``max`` - с
-        максимальным. Подробная функция:
-        :func:`iduedu.graph.transformers.simplify_multiedges`.
+        For each node pair, one edge is selected by the ``weight`` column. ``rule="min"``
+        keeps the smallest weight and ``rule="max"`` keeps the largest weight.
+        Functional equivalent: :func:`iduedu.graph.transformers.simplify_multiedges`.
 
         Args:
-            weight: Колонка веса для выбора ребра.
-            rule: Правило выбора: ``min`` или ``max``.
-            inplace: Если ``True``, текущий объект будет заменен упрощенным
-                графом. Если ``False``, будет возвращен новый граф.
+            weight: Edge column used to choose the representative edge.
+            rule: Selection rule, either ``"min"`` or ``"max"``.
+            inplace: If ``True``, replace this object with the simplified graph.
 
         Returns:
-            Упрощенный ``UrbanGraph``.
+            Simplified ``UrbanGraph``.
         """
 
         from iduedu.graph.transformers import simplify_multiedges
@@ -558,19 +551,15 @@ class UrbanGraph:
         return self
 
     def relabel(self, *, inplace: bool = False) -> "UrbanGraph":
-        """
-        Перенумеровывает узлы графа в плотный ``RangeIndex``.
+        """Relabel graph nodes to a dense ``RangeIndex``.
 
-        Функциональный аналог:
-        :func:`iduedu.graph.editors.relabel_urban_graph`.
+        Functional equivalent: :func:`iduedu.graph.editors.relabel_urban_graph`.
 
         Args:
-            inplace: Если ``True``, текущий объект будет заменен
-                перенумерованным графом. Если ``False``, будет возвращен
-                новый граф.
+            inplace: If ``True``, replace this object with the relabeled graph.
 
         Returns:
-            ``UrbanGraph`` с обновленными индексами узлов и концами ребер.
+            ``UrbanGraph`` with updated node indexes and edge endpoints.
         """
 
         from .editors import relabel_urban_graph
@@ -584,23 +573,18 @@ class UrbanGraph:
         return self
 
     def clip(self, polygon, *, inplace: bool = False) -> "UrbanGraph":
-        """
-        Обрезает граф по геометрии, сохраняя только узлы внутри нее.
+        """Clip the graph by geometry and keep only nodes inside it.
 
-        Ребра сохраняются только если оба их конца остались в графе. Индексы
-        узлов не перенумеровываются; при необходимости вызовите
-        :meth:`relabel`.
-
-        Функциональный аналог:
-        :func:`iduedu.graph.editors.clip_urban_graph`.
+        Edges are retained only when both endpoints remain in the graph. Node ids are
+        preserved; call :meth:`relabel` if dense labels are needed. Functional
+        equivalent: :func:`iduedu.graph.editors.clip_urban_graph`.
 
         Args:
-            polygon: Геометрия Shapely в CRS графа.
-            inplace: Если ``True``, текущий объект будет заменен обрезанным
-                графом. Если ``False``, будет возвращен новый граф.
+            polygon: Shapely geometry in the graph CRS.
+            inplace: If ``True``, replace this object with the clipped graph.
 
         Returns:
-            Обрезанный ``UrbanGraph``.
+            Clipped ``UrbanGraph``.
         """
 
         from .editors import clip_urban_graph
@@ -621,27 +605,21 @@ class UrbanGraph:
         node_conflict: str = "left",
         inplace: bool = False,
     ) -> "UrbanGraph":
-        """
-        Объединяет текущий граф с другим ``UrbanGraph``.
+        """Join this graph with another compatible ``UrbanGraph``.
 
-        Общие индексы узлов допускаются; атрибуты таких узлов выбираются
-        параметром ``node_conflict``. Ребра с одинаковыми ключами ``u/v/k`` для
-        мультиграфа или ``u/v`` для обычного графа считаются конфликтом.
-
-        Функциональный аналог:
-        :func:`iduedu.graph.editors.join_urban_graphs`.
+        Shared node indexes are allowed and resolved with ``node_conflict``. Duplicate
+        edge keys are treated as conflicts.
 
         Args:
-            other: Второй граф для объединения.
-            graph_type: Тип результирующего графа. Если ``None``, сохраняется
-                тип текущего графа.
-            node_conflict: Какая сторона выигрывает при совпадении индексов
-                узлов: ``"left"`` или ``"right"``.
-            inplace: Если ``True``, текущий объект будет заменен объединенным
-                графом. Если ``False``, будет возвращен новый граф.
+            other: Graph to append.
+            graph_type: Optional graph type for the result. If ``None``, keep this graph
+                type.
+            node_conflict: Which side wins when node indexes overlap: ``"left"`` or
+                ``"right"``.
+            inplace: If ``True``, replace this object with the joined graph.
 
         Returns:
-            Объединенный ``UrbanGraph``.
+            Joined ``UrbanGraph``.
         """
 
         from iduedu.graph.editors import join_urban_graphs
@@ -661,21 +639,18 @@ class UrbanGraph:
         default_direction_value: bool = False,
         inplace: bool = False,
     ) -> "UrbanGraph":
-        """
-        Возвращает направленную версию графа с булевой колонкой направления.
+        """Return a directed version of the graph with an edge direction column.
 
-        Функциональный аналог:
-        :func:`iduedu.graph.transformers.to_directed`.
+        Functional equivalent: :func:`iduedu.graph.transformers.to_directed`.
 
         Args:
-            edge_direction_column: Имя колонки односторонности ребра.
-            default_direction_value: Значение для ребер, где колонка
-                отсутствует или содержит пропуск.
-            inplace: Если ``True``, текущий объект будет заменен направленным
-                графом. Если ``False``, будет возвращен новый граф.
+            edge_direction_column: Name of the boolean one-way edge column.
+            default_direction_value: Value used for edges where the column is missing or
+                null.
+            inplace: If ``True``, replace this object with the directed graph.
 
         Returns:
-            Направленный ``UrbanGraph``.
+            Directed ``UrbanGraph``.
         """
 
         from iduedu.graph.transformers import to_directed
@@ -693,19 +668,15 @@ class UrbanGraph:
         return self
 
     def to_undirected(self, *, inplace: bool = False) -> "UrbanGraph":
-        """
-        Возвращает ненаправленную версию графа.
+        """Return an undirected version of the graph.
 
-        Функциональный аналог:
-        :func:`iduedu.graph.transformers.to_undirected`.
+        Functional equivalent: :func:`iduedu.graph.transformers.to_undirected`.
 
         Args:
-            inplace: Если ``True``, текущий объект будет заменен
-                ненаправленным графом. Если ``False``, будет возвращен новый
-                граф.
+            inplace: If ``True``, replace this object with the undirected graph.
 
         Returns:
-            Ненаправленный ``UrbanGraph``.
+            Undirected ``UrbanGraph``.
         """
 
         from .transformers import to_undirected
@@ -749,43 +720,28 @@ class UrbanGraph:
         add_link_edge: bool = True,
         inplace: bool = False,
     ) -> tuple["UrbanGraph", pd.Series]:
-        """
-        Добавляет объекты на ближайшие ребра графа.
+        """Project objects onto nearest graph edges and add them to the graph.
 
-        Метод создает для каждого объекта собственный узел графа, проецирует
-        его ``representative_point()`` на ближайшее ребро, разрезает это ребро
-        при необходимости и добавляет соединительное ребро. Это основной
-        способ подготовить здания, сервисы или любые другие объекты к расчету
-        графовой OD-матрицы в in-memory сценариях.
-
-        Для backend-сервиса, где изменения графа нужно сохранить в БД, обычно
-        удобнее напрямую использовать
-        :func:`iduedu.graph.editors.project_objects2urban_graph`.
-        Этот метод является оберткой, которая сразу применяет изменения к
-        локальной копии графа.
-
-        Функциональный аналог:
-        :func:`iduedu.graph.editors.project_objects2urban_graph` +
-        :func:`iduedu.graph.editors.apply_urban_graph_changes`.
+        The method creates graph nodes for objects, projects their representative points
+        onto nearest edges, splits those edges when needed and adds connector edges. It
+        is convenient for in-memory preparation of buildings, services or other objects
+        before OD-matrix calculations. For backend workflows where graph changes should
+        be persisted separately, use :func:`iduedu.graph.editors.project_objects2urban_graph`.
 
         Args:
-            objects_gdf: Объекты с уникальным индексом и геометрией. Индекс
-                станет индексом ``object2node_map``.
-            speed_m_per_min: Скорость движения по соединительным ребрам в
-                метрах в минуту. Для 5 км/ч можно использовать
-                ``5 * 1000 / 60``.
-            max_dist: Максимальная дистанция до ближайшего ребра. Если
-                ``None``, ограничение не применяется.
-            add_link_edge: Если ``True``, создается отдельный узел объекта и
-                соединительное ребро до точки проекции. Если ``False``, объект
-                сопоставляется с точкой проекции на графе.
-            inplace: Если ``True``, изменения применяются к текущему графу.
-                Если ``False``, возвращается новый граф.
+            objects_gdf: Objects with a unique index and geometry. The index becomes the
+                ``object2node_map`` index.
+            speed_m_per_min: Movement speed on connector edges, in meters per minute.
+                For 5 km/h use ``5 * 1000 / 60``.
+            max_dist: Optional maximum distance to the nearest edge. If ``None``, no
+                distance limit is applied.
+            add_link_edge: If ``True``, create a dedicated object node and connector
+                edge. If ``False``, map objects to projection nodes on the graph.
+            inplace: If ``True``, apply changes to this graph.
 
         Returns:
-            Пара ``(graph, object2node_map)``. ``object2node_map`` -
-            ``Series``, где индексом является исходный индекс объекта, а
-            значением - идентификатор добавленного узла графа.
+            Pair ``(graph, object2node_map)``. ``object2node_map`` is indexed by the
+            original object index and contains graph node ids.
         """
 
         from iduedu.graph.editors import apply_urban_graph_changes, project_objects2urban_graph

@@ -18,6 +18,7 @@ def _validate_graph(graph: UrbanGraph) -> None:
 
 def _components_from_labels(nodelist: list[Any], labels: np.ndarray) -> list[set[Any]]:
     def sort_components(components: list[set[Any]]) -> list[set[Any]]:
+        """Sort components by descending size and stable textual node order."""
         return sorted(
             components, key=lambda component: (-len(component), min(map(repr, component)) if component else "")
         )

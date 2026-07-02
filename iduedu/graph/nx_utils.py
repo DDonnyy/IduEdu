@@ -106,7 +106,7 @@ def nx_graph2gml(graph: nx.Graph, gml_path: str) -> nx.Graph:
     `stringizer=str` so any non-primitive attribute values are serialized as strings.
 
     Parameters:
-        graph (nx.Graph): Input graph. Not mutated — a sanitized copy is written.
+        graph (nx.Graph): Input graph. Not mutated - a sanitized copy is written.
         gml_path (str): Output GML file path.
 
     Returns:
@@ -271,6 +271,7 @@ def gdf2graph(
     """
 
     def unique_list(agg_vals):
+        """Return values in their first-seen order without duplicates."""
         agg_vals = list(set(agg_vals.dropna()))
         if len(agg_vals) == 1:
             return agg_vals[0]
@@ -302,7 +303,7 @@ def gdf2graph(
         ).buffer(0.05, resolution=2)
         lines_with_attrs = gpd.sjoin(lines_centroids, gdf, how="left", predicate="intersects")
         aggregated_attrs = (
-            lines_with_attrs.drop(columns=["geometry", "index_right"])  # убрать геометрию буфера
+            lines_with_attrs.drop(columns=["geometry", "index_right"])  # remove buffer geometry
             .groupby(lines_with_attrs.index)
             .agg(unique_list)
         )

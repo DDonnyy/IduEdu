@@ -1,7 +1,5 @@
 from dataclasses import dataclass, replace
 
-# TODO ограничить значения параметров name в TransportSpec
-
 
 @dataclass(frozen=True, slots=True)
 class TransportSpec:
@@ -62,7 +60,7 @@ class TransportSpec:
         segment_len_m: float,
         *,
         speed_limit_mpm: float | None = None,
-        min_speed_mpm: float = 60.0,  # 60 м/мин = 1 м/с = 3.6 км/ч
+        min_speed_mpm: float = 60.0,  # 60 m/min = 1 m/s = 3.6 km/h
     ) -> float:
         """
         Compute travel time (minutes) for a single graph segment.
@@ -74,7 +72,7 @@ class TransportSpec:
         - time lost on acceleration and braking.
 
         For short segments where the vehicle cannot reach cruising speed, a reduced peak speed
-        is assumed and the segment is traversed using an acceleration–deceleration profile
+        is assumed and the segment is traversed using an acceleration-deceleration profile
         without a cruising phase.
 
         Parameters:
@@ -101,7 +99,7 @@ class TransportSpec:
             velocity = min(velocity, float(speed_limit_mpm))
 
         velocity *= float(self.traffic_coef)
-        velocity = max(velocity, float(min_speed_mpm))  # защита от нулей
+        velocity = max(velocity, float(min_speed_mpm))  # avoid zero speed
 
         d_acc = max(float(self.accel_dist_m), 0.0)
         d_brk = max(float(self.brake_dist_m), 0.0)
@@ -115,7 +113,7 @@ class TransportSpec:
 
         d_cruise = max(segment_len_m - span, 0.0)
 
-        # время в минутах (на accel/brake средняя скорость ~ V/2)
+        # time in minutes; acceleration/braking use average speed about V/2
         t_acc = (2.0 * d_acc) / velocity
         t_brk = (2.0 * d_brk) / velocity
         t_cruise = d_cruise / velocity
@@ -136,6 +134,7 @@ class TransportRegistry:
     """
 
     def __init__(self, specs: dict[str, TransportSpec] | None = None):
+        """Initialize the registry with optional transport specifications."""
         self._specs: dict[str, TransportSpec] = {}
         if specs:
             for k, v in specs.items():

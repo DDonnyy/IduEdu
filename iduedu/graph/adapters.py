@@ -28,33 +28,30 @@ def nx_graph2urban_graph(
     check_oneway: bool = True,
     oneway_column: str = "oneway",
 ) -> UrbanGraph:
-    """
-    Преобразует граф NetworkX в ``UrbanGraph``.
+    """Convert a NetworkX graph to an ``UrbanGraph``.
 
-    Функция нужна для импорта графов из библиотек, которые отдают результат в
-    формате NetworkX, например из IduEdu. В графе должны быть координаты узлов
-    ``x``/``y``, атрибут ``crs`` и реберные атрибуты ``geometry``,
-    ``length_meter`` и ``time_min``.
+    This helper is intended for compatibility with libraries that still produce
+    NetworkX graphs. Nodes must contain ``x`` and ``y`` coordinates, the graph must
+    expose a ``crs`` attribute, and edges are expected to carry ``geometry``,
+    ``length_meter`` and ``time_min`` attributes.
 
     Args:
-        nx_graph: ``networkx.Graph`` или ``networkx.MultiGraph``. Если
-            передан ``networkx.DiGraph`` или ``networkx.MultiDiGraph``,
-            функция выдаст предупреждение: стабильная работа с directed
-            NetworkX-графами не гарантируется.
-        restore_edge_geom: Если ``True``, пустые геометрии ребер будут
-            восстановлены прямой линией между узлами. Если ``False``, ребра с
-            пустой геометрией будут удалены.
-        check_oneway: Если ``True`` и в ребрах есть колонка
-            ``oneway_column``, она будет использована для
-            частично направленного графа.
-        oneway_column: Имя булевой колонки односторонности ребра.
+        nx_graph: NetworkX graph, directed graph, multigraph or multidigraph.
+            Directed graphs are accepted for compatibility, but a warning is emitted
+            because stable behavior for directed NetworkX inputs is not guaranteed.
+        restore_edge_geom: If ``True``, empty edge geometries are restored as
+            straight lines between endpoint nodes. If ``False``, edges with empty
+            geometries are removed.
+        check_oneway: If ``True`` and ``oneway_column`` exists on edges, that column
+            is used as the UrbanGraph edge direction column.
+        oneway_column: Boolean edge attribute that marks one-way movement.
 
     Returns:
-        Экземпляр :class:`iduedu.graph.urban_graph.UrbanGraph`.
+        Converted ``UrbanGraph`` instance.
 
     Raises:
-        TypeError: Если передан не NetworkX-граф.
-        ValueError: Если в графе нет CRS, узлов или ребер.
+        TypeError: If ``nx_graph`` is not a NetworkX graph.
+        ValueError: If required CRS, node or edge data is missing or invalid.
     """
 
     nx = _require_networkx()
@@ -171,19 +168,18 @@ def nx_graph2urban_graph(
 
 
 def urban_graph2nx_graph(urban_graph: UrbanGraph) -> Any:
-    """
-    Преобразует ``UrbanGraph`` в NetworkX-граф.
+    """Convert an ``UrbanGraph`` to a NetworkX graph.
 
-    В обычной работе сервиса этот формат не обязателен, но полезен для
-    интеграции с библиотеками, которые принимают ``networkx.Graph``.
+    NetworkX is not required for normal IduEdu workflows, but this conversion is
+    useful at integration boundaries with tools that consume NetworkX graph objects.
 
     Args:
-        urban_graph: Табличный городской граф.
+        urban_graph: Tabular urban graph to convert.
 
     Returns:
-        ``networkx.Graph``, ``networkx.DiGraph``, ``networkx.MultiGraph`` или
-        ``networkx.MultiDiGraph`` с атрибутами узлов и ребер из таблиц
-        ``UrbanGraph``.
+        ``networkx.Graph``, ``networkx.DiGraph``, ``networkx.MultiGraph`` or
+        ``networkx.MultiDiGraph`` with node and edge attributes copied from the
+        UrbanGraph tables.
     """
 
     nx = _require_networkx()

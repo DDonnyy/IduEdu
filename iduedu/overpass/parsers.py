@@ -46,7 +46,7 @@ def parse_maxspeed_to_m_per_min(raw: str | int | float | None) -> float | None:
     m = re.match(r"^(\d+(?:\.\d+)?)\s*(mph)$", s)
     if m:
         v = float(m.group(1))
-        # 1 mph ≈ 1.60934 km/h
+        # 1 mph ~= 1.60934 km/h
         v_kmh = v * 1.60934
         return v_kmh * 1000.0 / 60.0
 
@@ -136,7 +136,7 @@ def process_roles(route, roles, transformer):
 
 def side_left_or_right(point, path):
     """Return whether a point lies on the left or right side of a path."""
-    # 1 if left 0 if right для определения с какой стороны от линии точки
+    # 1 for left and 0 for right relative to the line.
     dist = path.project(point)
 
     d1 = dist - 1 if dist - 1 > 0 else 0
@@ -154,7 +154,7 @@ def side_left_or_right(point, path):
 
 def offset_point(point, path_line, direction, distance=7) -> tuple[float, float]:
     """Offset a point from a path by a fixed distance to one side."""
-    # для размещения платформы по одну сторону от пути на расстоянии
+    # Place the platform on one side of the track at a fixed offset.
     dist = path_line.project(point)
     d1 = dist - 1 if dist - 1 > 0 else 0
     d2 = dist + 1.1 if dist + 1.1 < path_line.length else path_line.length
@@ -168,12 +168,12 @@ def offset_point(point, path_line, direction, distance=7) -> tuple[float, float]
     length = math.sqrt(dx**2 + dy**2)
     dx, dy = dx / length, dy / length
 
-    if direction == 0:  # Вправо
+    if direction == 0:  # Right
         nx, ny = dy, -dx
-    else:  # Влево
+    else:  # Left
         nx, ny = -dy, dx
 
-    # Смещенная точка
+    # Offset point
     offset_x = nearest_pt_on_line.x + nx * distance
     offset_y = nearest_pt_on_line.y + ny * distance
     return offset_x, offset_y
@@ -249,6 +249,7 @@ def _link_unconnected(disconnected_ways) -> dict:  # pragma: no cover
     distances[mask] = np.inf
 
     def relative_point(point: int):
+        """Return the opposite endpoint index for a two-endpoint line."""
         _rel_point = point // 2 * 2
         return _rel_point if _rel_point != point else _rel_point + 1
 
@@ -339,7 +340,7 @@ def _link_unconnected(disconnected_ways) -> dict:  # pragma: no cover
 
 
 def _find_stop_platform_pairs(platforms, stops, platforms_refs, stops_refs):
-    items = []  # [(platform_coords, platform_ref, stop_coords, stop_ref), на выходе не может быть пары без платформы
+    items = []  # [(platform_coords, platform_ref, stop_coords, stop_ref); every pair must have a platform]
 
     platform_len, stops_len = len(platforms), len(stops)
     matched_p, matched_s = set(), set()
@@ -353,7 +354,7 @@ def _find_stop_platform_pairs(platforms, stops, platforms_refs, stops_refs):
 
         dists = np.asarray(dists)
         idxs = np.asarray(idxs)
-        if dists.ndim == 1:  # это случается, когда k == 1
+        if dists.ndim == 1:  # This happens when k == 1.
             dists = dists[:, None]
             idxs = idxs[:, None]
 
@@ -428,9 +429,11 @@ def overpass_ground_transport2edgenode(
     edges_data: list[dict] = []
 
     def add_node(node_id, point, node_type):
+        """Add a graph node record to the local accumulator."""
         nodes_data.append({"node_id": node_id, "geometry": point, "type": node_type})
 
     def add_edge(u, v, edge_type, geometry: LineString, extra_data=None, speed_m_min=None, oneway=True):
+        """Add a graph edge record to the local accumulator."""
         payload = {"u": u, "v": v, "type": edge_type, "geometry": geometry, "oneway": bool(oneway)}
         if extra_data is not None:
             payload["extra_data"] = extra_data
@@ -490,28 +493,28 @@ def overpass_ground_transport2edgenode(
         if coords[0] == coords[-1]:
             continue
 
-        # хвост текущего == голова нового: dst += coords[1:]
+        # current tail == new head: dst += coords[1:]
         if dst["coords"][-1] == coords[0]:
             dst["coords"] += coords[1:]
             dst["speeds"] += [speed] * (len(coords) - 1)
-        # хвост текущего == хвост нового: dst += coords[::-1][1:]
+        # current tail == new tail: dst += coords[::-1][1:]
         elif dst["coords"][-1] == coords[-1]:
             rcoords = coords[::-1]
             dst["coords"] += rcoords[1:]
             dst["speeds"] += [speed] * (len(coords) - 1)
-        # голова текущего == голова нового: coords[::-1] + dst[1:]
+        # current head == new head: coords[::-1] + dst[1:]
         elif dst["coords"][0] == coords[0]:
             new_coords = coords[::-1] + dst["coords"][1:]
             new_speeds = ([speed] * (len(coords) - 1)) + dst["speeds"]
             connected_ways[cur_way] = {"coords": new_coords, "speeds": new_speeds}
 
-        # голова текущего == хвост нового: coords + dst[1:]
+        # current head == new tail: coords + dst[1:]
         elif dst["coords"][0] == coords[-1]:
             new_coords = coords + dst["coords"][1:]
             new_speeds = ([speed] * (len(coords) - 1)) + dst["speeds"]
             connected_ways[cur_way] = {"coords": new_coords, "speeds": new_speeds}
 
-        # нет соединяющей точки — новый компонент
+        # no connecting point - start a new component
         else:
             connected_ways.append({"coords": coords, "speeds": [speed] * len(coords)})
             cur_way += 1
@@ -521,18 +524,18 @@ def overpass_ground_transport2edgenode(
             raise ValueError(f"speeds/coords mismatch: {len(w['speeds'])} vs {len(w['coords'])}")
 
     if len(connected_ways) > 1:
-        # удаляем все круговые движения (замкнутые линии)
+        # remove closed loop lines
         to_del = [
             i
             for i, w in enumerate(connected_ways)
             if w.get("coords") and len(w["coords"]) >= 2 and w["coords"][0] == w["coords"][-1]
         ]
 
-        # Если кол-во удалений == кол-во путей, надо оставить хотя бы самый большой
+        # If every path would be removed, keep at least the longest one.
         if to_del and len(to_del) == len(connected_ways):
-            # найдём индекс самого длинного пути среди замкнутых
+            # find the longest closed path index
             longest_index = max(to_del, key=lambda i: len(connected_ways[i].get("coords", [])))
-            # удалим все, кроме самого длинного
+            # remove all except the longest one
             to_del.remove(longest_index)
 
         connected_ways = [w for j, w in enumerate(connected_ways) if j not in to_del]
@@ -629,7 +632,7 @@ def overpass_ground_transport2edgenode(
 
         projected_stop = path.interpolate(stop_dist)
 
-        # Платформы лежат нереалистично далеко от спроецированных остановок, ошибка в данных осм
+        # Platforms are unrealistically far from projected stops; likely OSM data error.
         if projected_stop.distance(platform) > 100:
             continue
 
@@ -696,12 +699,14 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
     stations_data = subway_data[subway_data["is_station"]].copy()
 
     def add_node(node_id, point, node_type, route=None):
+        """Add a graph node record to the local accumulator."""
         payload = {"node_id": node_id, "geometry": point, "type": node_type}
         if route is not None:
             payload["route"] = route
         nodes_data.append(payload)
 
     def add_edge(u, v, edge_type, geometry, route=None, oneway=True):
+        """Add a graph edge record to the local accumulator."""
         payload = {"u": u, "v": v, "type": edge_type, "geometry": geometry, "oneway": bool(oneway)}
         if route is not None:
             payload["route"] = route
@@ -709,7 +714,7 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
 
     add_edges, add_nodes = parse_overpass_subway_data(
         stop_areas, stop_areas_group, stations_data, local_crs
-    )  # Входы/выходы, пересадки и тд
+    )  # Entrances, exits, transfers and similar edges.
     add_edges = add_edges.rename(columns={"u_ref": "u", "v_ref": "v"})
     add_nodes = add_nodes.rename(columns={"ref_id": "node_id"})
 
@@ -759,10 +764,10 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
 
         if stops_len:
             base_dir = side_left_or_right(Point(platforms[platform_len // 2]), path) if platform_len else 1
-            for s_i in range(stops_len):  # Проверка остановок
+            for s_i in range(stops_len):  # Check stops.
                 if s_i in matched_s:
                     continue
-                # Добавляем пару с остановкой но без платформы
+                # Add a pair with a stop but without a platform.
                 add_edges_from_stop = add_edges[
                     (add_edges["type"] == "boarding")
                     & ((add_edges["u"] == stops_refs[s_i]) | (add_edges["v"] == stops_refs[s_i]))
@@ -791,7 +796,7 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
         for p_i in range(platform_len):
             if p_i in matched_p:
                 continue
-            # Добавляем пару с платформой у которой нету остановки
+            # Add a pair with a platform that has no stop.
             stop_plat_pairs.append(
                 {"p": platforms[p_i], "pref": platforms_refs[p_i], "s": None, "sref": f"from_{platforms_refs[p_i]}"}
             )
@@ -835,7 +840,7 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
 
             projected_stop = path.interpolate(stop_dist)
 
-            # Платформы лежат нереалистично далеко от спроецированных остановок, ошибка в данных осм
+            # Platforms are unrealistically far from projected stops; likely OSM data error.
             if projected_stop.distance(platform) > 100:
                 continue
 
@@ -1063,6 +1068,7 @@ def parse_overpass_subway_data(
         return stations, stops, platforms, entrances, entry_only, exit_only
 
     def add_node(ref_id, x, y, node_type):
+        """Add a graph node record to the local accumulator."""
         if x is None or y is None:
             return
         else:
@@ -1070,6 +1076,7 @@ def parse_overpass_subway_data(
         graph_nodes.append({"ref_id": int(ref_id), "geometry": point, "type": osm_roles_to_iduedu.get(node_type)})
 
     def add_edge(u, v, edge_type, oneway=True):
+        """Add a graph edge record to the local accumulator."""
         graph_edges.append({"u_ref": int(u), "v_ref": int(v), "type": edge_type, "oneway": bool(oneway)})
 
     patch_members_roles_inplace(stop_areas)

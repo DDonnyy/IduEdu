@@ -80,6 +80,8 @@ def build_adjacency_matrix(
     else:
         data = w
 
+    data = np.asarray(data, dtype=np.float32)
+
     return sparse.coo_matrix(
         (data, (row, col)),
         shape=(len(nodelist), len(nodelist)),

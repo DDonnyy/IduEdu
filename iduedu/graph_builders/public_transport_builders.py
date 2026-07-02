@@ -185,6 +185,7 @@ def _graph_data_to_urban_graph(
         graph_edges_gdf["speed_m_min"] = np.nan
 
     def calc_len_time(row):
+        """Calculate edge length and travel time for a public-transport edge."""
         geom = row.geometry
         length_m = float(round(geom.length, 3))
         spec = transport_registry.get(str(row.type))
@@ -289,7 +290,7 @@ def _build_public_transport_graph(
     polygon = get_4326_boundary(osm_id=osm_id, territory=territory)
     local_crs = estimate_crs_for_bounds(*polygon.bounds).to_epsg()
 
-    # Если парсим метро - ожидаем в ответе информацию о станциях
+    # Subway parsing expects station information in the response.
     expect_subway = False
     if "subway" in transport_types and config.overpass_date is None:
         expect_subway = True
@@ -303,7 +304,7 @@ def _build_public_transport_graph(
         logger.warning("No routes found for public transport.")
         return _empty_public_transport_graph(local_crs)
 
-    # необходимые osm теги из relation маршрута
+    # Required OSM tags from the route relation.
     needed_tags = set(config.transport_useful_edges_attr) if osm_edge_tags is None else set(osm_edge_tags)
 
     way_data = overpass_data[overpass_data["is_way_data"]].copy()

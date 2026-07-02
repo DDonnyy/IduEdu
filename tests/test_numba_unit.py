@@ -24,17 +24,17 @@ def _weighted_matrix():
                 [0, 0, 0, 1],
                 [0, 0, 0, 0],
             ],
-            dtype=np.uint32,
+            dtype=np.float32,
         )
     )
 
 
 def _row_to_dict(row):
-    return {int(col): int(value) for col, value in row}
+    return {int(col): float(value) for col, value in row}
 
 
 def _triplet_row_to_dict(row):
-    return {int(node): (int(source), int(distance)) for node, source, distance in row}
+    return {int(node): (int(source), float(distance)) for node, source, distance in row}
 
 
 def test_numba_jit_coverage_is_enabled_before_numba_import():
@@ -50,12 +50,13 @@ def test_csr_helpers_convert_scipy_rows_and_extract_coo_arrays():
     assert matrix.get_cols(0).tolist() == [1, 2]
     assert matrix.get_vals(0).tolist() == [1, 5]
 
-    row = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.int32(10))
+    row = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.float32(10))
     rows, cols, values = coo_rows_to_arrays([row])
 
     assert rows.tolist() == [0, 0, 0, 0]
     assert cols.tolist() == [0, 1, 2, 3]
-    assert values.tolist() == [0, 1, 3, 4]
+    assert values.tolist() == [0.0, 1.0, 3.0, 4.0]
+    assert values.dtype == np.float32
 
 
 def test_connected_components_numba_labels_disconnected_boolean_graph():
@@ -101,27 +102,27 @@ def test_strongly_connected_components_numba_labels_directed_components():
 def test_single_source_dijkstra_numba_respects_shortest_paths_and_cutoff():
     matrix = sparse_row2numba_matrix(_weighted_matrix())
 
-    full = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.int32(10))
-    cutoff = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.int32(2))
+    full = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.float32(10))
+    cutoff = single_source_dijkstra_numba_path_length(matrix, np.int32(0), np.float32(2))
 
-    assert _row_to_dict(full) == {0: 0, 1: 1, 2: 3, 3: 4}
-    assert _row_to_dict(cutoff) == {0: 0, 1: 1}
+    assert _row_to_dict(full) == {0: 0.0, 1: 1.0, 2: 3.0, 3: 4.0}
+    assert _row_to_dict(cutoff) == {0: 0.0, 1: 1.0}
 
 
 def test_multi_source_dijkstra_numba_returns_nearest_distances():
     matrix = sparse_row2numba_matrix(_weighted_matrix())
 
-    row = multi_source_dijkstra_numba_path_length(matrix, np.array([0, 3], dtype=np.int32), np.int32(10))
+    row = multi_source_dijkstra_numba_path_length(matrix, np.array([0, 3], dtype=np.int32), np.float32(10))
 
-    assert _row_to_dict(row) == {0: 0, 1: 1, 2: 3, 3: 0}
+    assert _row_to_dict(row) == {0: 0.0, 1: 1.0, 2: 3.0, 3: 0.0}
 
 
 def test_multi_source_dijkstra_numba_returns_nearest_source_with_distance():
     matrix = sparse_row2numba_matrix(_weighted_matrix())
 
-    row = multi_source_dijkstra_numba_nearest_source(matrix, np.array([0, 3], dtype=np.int32), np.int32(10))
+    row = multi_source_dijkstra_numba_nearest_source(matrix, np.array([0, 3], dtype=np.int32), np.float32(10))
 
-    assert _triplet_row_to_dict(row) == {0: (0, 0), 1: (0, 1), 2: (0, 3), 3: (3, 0)}
+    assert _triplet_row_to_dict(row) == {0: (0, 0.0), 1: (0, 1.0), 2: (0, 3.0), 3: (3, 0.0)}
 
 
 def test_parallel_od_numba_returns_destination_columns_per_origin():
@@ -131,15 +132,15 @@ def test_parallel_od_numba_returns_destination_columns_per_origin():
         matrix,
         np.array([0, 3], dtype=np.int32),
         np.array([2, 3], dtype=np.int32),
-        np.int32(10),
+        np.float32(10),
     )
 
-    assert [_row_to_dict(row) for row in rows] == [{0: 3, 1: 4}, {1: 0}]
+    assert [_row_to_dict(row) for row in rows] == [{0: 3.0, 1: 4.0}, {1: 0.0}]
 
 
 def test_parallel_path_length_numba_returns_rows_per_origin():
     matrix = sparse_row2numba_matrix(_weighted_matrix())
 
-    rows = dijkstra_numba_path_length_parallel(matrix, np.array([0, 3], dtype=np.int32), np.int32(10))
+    rows = dijkstra_numba_path_length_parallel(matrix, np.array([0, 3], dtype=np.int32), np.float32(10))
 
-    assert [_row_to_dict(row) for row in rows] == [{0: 0, 1: 1, 2: 3, 3: 4}, {3: 0}]
+    assert [_row_to_dict(row) for row in rows] == [{0: 0.0, 1: 1.0, 2: 3.0, 3: 4.0}, {3: 0.0}]

@@ -16,6 +16,8 @@ URBANGRAPH_FORMAT = "iduedu.urbangraph"
 URBANGRAPH_FORMAT_VERSION = 1
 URBANGRAPH_SUFFIX = ".urbangraph"
 
+_NONSCALAR_TYPES = (list, tuple, set, dict, np.ndarray)
+
 METADATA_FILE = "metadata.json"
 NODES_FILE = "nodes.parquet"
 EDGES_FILE = "edges.parquet"
@@ -57,11 +59,17 @@ def write_urban_graph(
     graph.validate()
     metadata = _build_metadata(graph, include_adjacency=include_adjacency)
 
+    # Parquet cannot store object columns that mix scalars with lists/tuples/dicts
+    # (e.g. collapsed PT ``route`` attributes on joined platform nodes). Such columns
+    # are JSON-encoded before writing and decoded back on read.
+    nodes_to_write, metadata["nodes_encoded_columns"] = _encode_object_columns(graph.nodes_gdf)
+    edges_to_write, metadata["edges_encoded_columns"] = _encode_object_columns(graph.edges_gdf)
+
     try:
         with TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
-            graph.nodes_gdf.to_parquet(tmp_path / NODES_FILE, index=True)
-            graph.edges_gdf.to_parquet(tmp_path / EDGES_FILE, index=True)
+            nodes_to_write.to_parquet(tmp_path / NODES_FILE, index=True)
+            edges_to_write.to_parquet(tmp_path / EDGES_FILE, index=True)
 
             if metadata["has_adjacency"]:
                 sparse.save_npz(tmp_path / ADJACENCY_FILE, graph.adjacency_matrix)
@@ -112,6 +120,8 @@ def read_urban_graph(path: str | Path, *, validate: bool = True) -> UrbanGraph:
 
             nodes_gdf = _read_frame(archive, NODES_FILE, metadata["nodes_frame"])
             edges_gdf = _read_frame(archive, EDGES_FILE, metadata["edges_frame"])
+            _decode_object_columns(nodes_gdf, metadata.get("nodes_encoded_columns", []))
+            _decode_object_columns(edges_gdf, metadata.get("edges_encoded_columns", []))
             graph = UrbanGraph(
                 nodes_gdf=nodes_gdf,
                 edges_gdf=edges_gdf,
@@ -191,7 +201,63 @@ def _read_frame(archive: ZipFile, member: str, frame_kind: str) -> pd.DataFrame 
     raise ValueError(f"Unsupported frame kind: {frame_kind!r}")
 
 
+def _encode_object_columns(frame: pd.DataFrame | gpd.GeoDataFrame) -> tuple[pd.DataFrame | gpd.GeoDataFrame, list[str]]:
+    """Return a copy of ``frame`` with non-scalar object columns JSON-encoded.
+
+    Only object columns that actually contain lists/tuples/sets/dicts/arrays are
+    touched; the names of the encoded columns are returned so they can be decoded
+    on read.
+    """
+
+    geometry_name = frame.geometry.name if isinstance(frame, gpd.GeoDataFrame) else None
+    encoded_columns = [
+        column
+        for column in frame.columns
+        if column != geometry_name
+        and frame[column].dtype == object
+        and frame[column].map(lambda value: isinstance(value, _NONSCALAR_TYPES)).any()
+    ]
+    if not encoded_columns:
+        return frame, []
+
+    frame = frame.copy()
+    for column in encoded_columns:
+        frame[column] = frame[column].map(_encode_value)
+    return frame, encoded_columns
+
+
+def _decode_object_columns(frame: pd.DataFrame | gpd.GeoDataFrame, columns: list[str]) -> None:
+    for column in columns:
+        if column in frame.columns:
+            frame[column] = frame[column].map(_decode_value)
+
+
+def _encode_value(value):
+    if not isinstance(value, _NONSCALAR_TYPES) and _is_na(value):
+        return None
+    return json.dumps(value, ensure_ascii=False, default=_json_default)
+
+
+def _decode_value(value):
+    if value is None or _is_na(value):
+        return value
+    return json.loads(value)
+
+
+def _is_na(value) -> bool:
+    if isinstance(value, _NONSCALAR_TYPES):
+        return False
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def _json_default(value):
     if isinstance(value, np.generic):
         return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (set, tuple)):
+        return list(value)
     return str(value)

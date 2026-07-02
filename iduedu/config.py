@@ -16,6 +16,7 @@ class Config:
     """Global runtime settings for Overpass, caching, logging and graph builders."""
 
     def __init__(self):
+        """Initialize runtime settings from environment variables."""
         # --- Overpass endpoints ---
         self.overpass_url: str = os.getenv("OVERPASS_URL", "https://overpass-api.de/api/interpreter")
 
@@ -132,18 +133,18 @@ class Config:
         reset back to the "current" data.
 
         Usage examples:
-            * ``set_overpass_date()`` or ``set_overpass_date(None)`` —
+            * ``set_overpass_date()`` or ``set_overpass_date(None)`` -
               reset the date (no ``[date:...]`` in queries).
-            * ``set_overpass_date(date="2020-01-01")`` →
+            * ``set_overpass_date(date="2020-01-01")`` ->
               ``2020-01-01T00:00:00Z``.
-            * ``set_overpass_date(date="2020-01-01T12:34:56Z")`` →
+            * ``set_overpass_date(date="2020-01-01T12:34:56Z")`` ->
               stores the normalized value of this timestamp.
 
-            * ``set_overpass_date(year=2020)`` →
+            * ``set_overpass_date(year=2020)`` ->
               ``2020-01-01T00:00:00Z``.
-            * ``set_overpass_date(year=2020, month=5)`` →
+            * ``set_overpass_date(year=2020, month=5)`` ->
               ``2020-05-01T00:00:00Z``.
-            * ``set_overpass_date(year=2020, month=5, day=10)`` →
+            * ``set_overpass_date(year=2020, month=5, day=10)`` ->
               ``2020-05-10T00:00:00Z``.
 
         Args:
@@ -153,9 +154,9 @@ class Config:
             year: Year component of the date. If provided without ``date``,
                 at least the year must be set; ``month`` and ``day`` are
                 optional and default to January 1 if omitted.
-            month: Month component of the date (1–12). Optional when used
+            month: Month component of the date (1-12). Optional when used
                 with ``year``. Defaults to 1 (January) if not provided.
-            day: Day component of the date (1–31). Optional when used with
+            day: Day component of the date (1-31). Optional when used with
                 ``year`` and ``month``. Defaults to 1 if not provided.
 
         Raises:

@@ -1,19 +1,13 @@
-"""Базовые алгоритмы поиска по :class:`iduedu.graph.urban_graph.UrbanGraph`.
+"""Shortest-path helpers for :class:`iduedu.graph.urban_graph.UrbanGraph`.
 
-Модуль является тонкой публичной оберткой над numba-реализациями из
-``iduedu._numba``. Здесь собрана неалгоритмическая подготовка, которую иначе
-пришлось бы повторять в каждом вызывающем методе:
+The module provides public wrappers around numba implementations from
+``iduedu._numba``. It handles graph validation, input normalization, adjacency
+matrix preparation, zero-copy conversion to numba-compatible CSR structures and
+conversion of sparse numba results back to pandas objects.
 
-* проверка ``UrbanGraph`` и выбранной колонки веса;
-* приведение входных объектов или готовых ids к узлам графа;
-* построение или переиспользование матрицы смежности;
-* перевод весов в целочисленное представление для numba;
-* обратная сборка разреженных результатов numba в pandas ``Series`` /
-  ``DataFrame``.
-
-Все расстояния возвращаются в исходных единицах ``weight``: минуты для
-``time_min`` и метры для ``length_meter``. Недостижимые узлы обозначаются
-``np.inf``, а результаты с длинами путей используют разреженные dtype pandas.
+Distances are returned in the original units of the selected edge ``weight``:
+minutes for ``time_min`` and meters for ``length_meter``. Unreachable nodes or
+pairs are represented as ``np.inf``.
 """
 
 import logging
@@ -42,21 +36,13 @@ DIST_COLUMN = "dist"
 SOURCE_NODE_COLUMN = "source_node"
 SOURCE_NODES_ATTR = "source_nodes"
 
-WEIGHT_SCALE = 100.0
 
-
-def _int_weight2float(value) -> np.ndarray | float:
-    """Возвращает вес из целочисленного формата numba в исходные единицы."""
-
-    return value.astype(float) / WEIGHT_SCALE if hasattr(value, "astype") else float(value) / WEIGHT_SCALE
-
-
-def _cutoff2int(weight_value_cutoff: float | None) -> np.int32:
-    """Переводит ограничение поиска в формат numba; ``None`` означает без ограничения."""
+def _cutoff2float(weight_value_cutoff: float | None) -> np.float32:
+    """Convert an optional search cutoff to the numba float32 convention."""
 
     if weight_value_cutoff is None:
-        return np.int32(np.iinfo(np.int32).max)
-    return np.int32(round(float(weight_value_cutoff) * WEIGHT_SCALE))
+        return np.float32(np.inf)
+    return np.float32(weight_value_cutoff)
 
 
 def _validate_max_workers(max_workers: int | None) -> None:
@@ -115,10 +101,13 @@ def _prepare_numba_graph(
     if urban_graph.adjacency_matrix.shape[0] == 0:
         raise ValueError("graph adjacency_matrix is empty")
 
-    sparse_row_scipy = urban_graph.adjacency_matrix.copy().tocsr()
-    sparse_row_scipy.data = np.round(sparse_row_scipy.data * WEIGHT_SCALE).astype(np.int32)
+    # The cached adjacency matrix is already a float32 CSR in the requested
+    # units, so it is handed to the numba kernel directly (no copy, no weight
+    # conversion). Only the reverse case builds a new matrix, since transposing
+    # yields a genuinely different structure.
+    sparse_row_scipy = urban_graph.adjacency_matrix
     if reverse and urban_graph.is_directed:
-        sparse_row_scipy = sparse_row_scipy.transpose().tocsc().tocsr()
+        sparse_row_scipy = sparse_row_scipy.transpose().tocsr()
     return sparse_row2numba_matrix(sparse_row_scipy)
 
 
@@ -136,10 +125,11 @@ def _path_length_series(
             dtype=pd.SparseDtype(dtype, fill_value=np.inf),
         )
 
-    reachable_pairs_arr = np.asarray(reachable_pairs, dtype=np.int32)
+    reachable_pairs_arr = np.asarray(reachable_pairs, dtype=np.float64)
+    node_positions = reachable_pairs_arr[:, 0].astype(np.int64)
     return pd.Series(
-        _int_weight2float(reachable_pairs_arr[:, 1]).astype(dtype),
-        index=pd.Index(pos_to_node[reachable_pairs_arr[:, 0]], name=NODE_INDEX_NAME),
+        reachable_pairs_arr[:, 1].astype(dtype),
+        index=pd.Index(pos_to_node[node_positions], name=NODE_INDEX_NAME),
         name=DIST_COLUMN,
     ).astype(pd.SparseDtype(dtype, fill_value=np.inf))
 
@@ -153,30 +143,28 @@ def single_source_dijkstra_path_length(
     reverse: bool = False,
     dtype: np.dtype = np.float32,
 ) -> pd.Series:
-    """Считает длины кратчайших путей от одного источника до всех узлов графа.
+    """Compute shortest-path distances from one source node to graph nodes.
 
     Args:
-        urban_graph: Городской граф с таблицами узлов, ребер и весами ребер.
-        source_node: Существующий id узла из ``graph.nodes_gdf.index``.
-        weight: Колонка веса ребра. Обычно ``"time_min"`` или
-            ``"length_meter"``.
-        cutoff: Максимальная стоимость пути. Узлы дальше этого значения
-            остаются ``np.inf`` в результате.
-        reverse: Если ``True`` и граф направленный, расчет идет по
-            транспонированной матрице смежности. Это нужно для задач покрытия
-            в логике "кто может доехать до назначения". Для ненаправленного
-            графа параметр не влияет на расчет.
-        dtype: Вещественный dtype возвращаемой разреженной серии.
+        urban_graph: Urban graph with node and edge tables.
+        source_node: Existing node id from ``graph.nodes_gdf.index``.
+        weight: Edge weight column, usually ``"time_min"`` or ``"length_meter"``.
+        cutoff: Optional maximum path cost. Nodes beyond the cutoff are omitted from
+            the sparse result and are interpreted as ``np.inf``.
+        reverse: If ``True`` and the graph is directed, run on the reversed
+            adjacency matrix. This is useful for coverage queries such as "which
+            nodes can reach this destination".
+        dtype: Floating dtype for the returned sparse series.
 
     Returns:
-        Разреженный ``Series`` с индексом из всех узлов графа. Значения -
-        длины путей от ``source_node``; недостижимые узлы равны ``np.inf``.
+        Sparse ``Series`` indexed by reachable graph node ids with path distances
+        from ``source_node``.
     """
 
     numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=cutoff, reverse=reverse)
     source_pos = _node_positions(urban_graph, [source_node])[0]
     reachable_pairs = single_source_dijkstra_numba_path_length(
-        numba_adj_matrix, np.int32(source_pos), _cutoff2int(cutoff)
+        numba_adj_matrix, np.int32(source_pos), _cutoff2float(cutoff)
     )
     return _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
 
@@ -192,32 +180,29 @@ def multi_source_dijkstra_path_length(
     reverse: bool = False,
     dtype: np.dtype = np.float32,
 ) -> pd.Series:
-    """Считает расстояние от ближайшего источника до каждого узла графа.
+    """Compute distance from the nearest source to each reachable graph node.
 
-    Аналог ``networkx.multi_source_dijkstra_path_length``: все источники
-    кладутся в одну очередь Дейкстры, поэтому каждый узел получает только
-    лучшее расстояние до ближайшего источника. Информация о победившем
-    источнике здесь не сохраняется; для этого используйте
-    :func:`multi_source_dijkstra_nearest_source`.
+    All sources are inserted into one Dijkstra queue, so each node receives only the
+    best distance to the closest source. Use
+    :func:`multi_source_dijkstra_nearest_source` when the winning source id is also
+    needed.
 
     Args:
-        urban_graph: Городской граф с таблицами узлов, ребер и весами ребер.
-        source_nodes: Узлы-источники. Передается либо этот параметр, либо
-            ``gdf_sources``.
-        gdf_sources: Таблица/GeoDataFrame с объектами-источниками. Если есть
-            ``graph_node_column``, узлы берутся из этой колонки; иначе
-            ближайшие узлы графа ищутся по геометрии.
-        graph_node_column: Колонка с ids узлов графа в ``gdf_sources``.
-        weight: Колонка веса ребра.
-        cutoff: Максимальная стоимость пути.
-        reverse: Если ``True`` и граф направленный, расчет идет по обратной
-            матрице смежности.
-        dtype: Вещественный dtype возвращаемой разреженной серии.
+        urban_graph: Urban graph with node and edge tables.
+        source_nodes: Source node ids. Pass either this argument or ``gdf_sources``.
+        gdf_sources: DataFrame or GeoDataFrame with source objects. If it contains
+            ``graph_node_column``, those node ids are used directly; otherwise
+            GeoDataFrame geometries are matched to nearest graph nodes.
+        graph_node_column: Column containing graph node ids in ``gdf_sources``.
+        weight: Edge weight column.
+        cutoff: Optional maximum path cost.
+        reverse: If ``True`` and the graph is directed, run on the reversed
+            adjacency matrix.
+        dtype: Floating dtype for the returned sparse series.
 
     Returns:
-        Разреженный ``Series`` с индексом из всех узлов графа. Нормализованное
-        соответствие исходных объектов узлам дополнительно сохраняется в
-        ``result.attrs["source_nodes"]``.
+        Sparse ``Series`` indexed by reachable graph node ids. The normalized source
+        mapping is stored in ``result.attrs["source_nodes"]``.
     """
 
     source_nodes_s = resolve_graph_nodes_input(
@@ -234,7 +219,7 @@ def multi_source_dijkstra_path_length(
     reachable_pairs = multi_source_dijkstra_numba_path_length(
         numba_adj_matrix,
         source_positions,
-        _cutoff2int(cutoff),
+        _cutoff2float(cutoff),
     )
     result = _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
     result.attrs[SOURCE_NODES_ATTR] = source_nodes_s
@@ -252,19 +237,13 @@ def multi_source_dijkstra_nearest_source(
     reverse: bool = False,
     dtype: np.dtype = np.float32,
 ) -> pd.DataFrame:
-    """Находит ближайший источник и расстояние до него для каждого узла графа.
+    """Find the nearest source and its distance for each reachable graph node.
 
-    Аргументы совпадают с :func:`multi_source_dijkstra_path_length`.
+    Arguments are the same as for :func:`multi_source_dijkstra_path_length`.
 
     Returns:
-        ``DataFrame`` с индексом из всех узлов графа и колонками:
-
-        * ``source_node`` - ближайший источник или ``pd.NA`` для недостижимых
-          узлов;
-        * ``dist`` - разреженное расстояние до источника, ``np.inf`` для
-          недостижимых узлов.
-
-        Нормализованное соответствие исходных объектов узлам сохраняется в
+        ``DataFrame`` indexed by reachable graph node ids with ``source_node`` and
+        ``dist`` columns. The normalized source mapping is stored in
         ``result.attrs["source_nodes"]``.
     """
 
@@ -281,7 +260,7 @@ def multi_source_dijkstra_nearest_source(
     source_positions = _node_positions(urban_graph, pd.Index(source_nodes_s.to_numpy()).unique())
     pos_to_node = _pos_to_node_array(urban_graph)
     reachable_triplets = multi_source_dijkstra_numba_nearest_source(
-        numba_adj_matrix, source_positions, _cutoff2int(cutoff)
+        numba_adj_matrix, source_positions, _cutoff2float(cutoff)
     )
 
     if len(reachable_triplets) == 0:
@@ -292,12 +271,14 @@ def multi_source_dijkstra_nearest_source(
             }
         )
     else:
-        reachable_triplets_arr = np.asarray(reachable_triplets, dtype=np.int32)
-        reachable_index = pd.Index(pos_to_node[reachable_triplets_arr[:, 0]], name=NODE_INDEX_NAME)
+        reachable_triplets_arr = np.asarray(reachable_triplets, dtype=np.float64)
+        node_positions = reachable_triplets_arr[:, 0].astype(np.int64)
+        source_positions_arr = reachable_triplets_arr[:, 1].astype(np.int64)
+        reachable_index = pd.Index(pos_to_node[node_positions], name=NODE_INDEX_NAME)
         result = pd.DataFrame(
             {
-                SOURCE_NODE_COLUMN: pos_to_node[reachable_triplets_arr[:, 1]],
-                DIST_COLUMN: _int_weight2float(reachable_triplets_arr[:, 2]).astype(dtype),
+                SOURCE_NODE_COLUMN: pos_to_node[source_positions_arr],
+                DIST_COLUMN: reachable_triplets_arr[:, 2].astype(dtype),
             },
             index=reachable_index,
         )
@@ -318,30 +299,28 @@ def dijkstra_path_length_parallel(
     dtype: np.dtype = np.float32,
     max_workers: int | None = None,
 ) -> pd.DataFrame:
-    """Запускает независимый поиск Дейкстры для каждого источника.
+    """Run independent Dijkstra searches for each source.
 
-    В отличие от :func:`multi_source_dijkstra_path_length`, источники не
-    объединяются в одну очередь. Функция считает отдельную строку расстояний
-    для каждого исходного объекта/узла, поэтому подходит как базовый метод для
-    изохрон по отдельным origin.
+    Unlike :func:`multi_source_dijkstra_path_length`, sources are not merged into one
+    queue. The result contains one sparse row per source object or source node,
+    which makes this helper suitable for per-origin isochrone calculations.
 
     Args:
-        urban_graph: Городской граф с таблицами узлов, ребер и весами ребер.
-        source_nodes: Узлы-источники. Передается либо этот параметр, либо
-            ``gdf_sources``.
-        gdf_sources: Таблица/GeoDataFrame с объектами-источниками.
-        graph_node_column: Колонка с ids узлов графа в ``gdf_sources``.
-        weight: Колонка веса ребра.
-        cutoff: Максимальная стоимость пути.
-        reverse: Если ``True`` и граф направленный, расчет идет по обратной
-            матрице смежности.
-        dtype: Вещественный dtype возвращаемого разреженного датафрейма.
-        max_workers: Число потоков numba для расчета.
+        urban_graph: Urban graph with node and edge tables.
+        source_nodes: Source node ids. Pass either this argument or ``gdf_sources``.
+        gdf_sources: DataFrame or GeoDataFrame with source objects.
+        graph_node_column: Column containing graph node ids in ``gdf_sources``.
+        weight: Edge weight column.
+        cutoff: Optional maximum path cost.
+        reverse: If ``True`` and the graph is directed, run on the reversed
+            adjacency matrix.
+        dtype: Floating dtype for returned sparse values.
+        max_workers: Optional number of numba worker threads.
 
     Returns:
-        Разреженный ``DataFrame``: строки - исходные объекты, колонки - все
-        узлы графа. Нормализованное соответствие исходных объектов узлам
-        сохраняется в ``result.attrs["source_nodes"]``.
+        Sparse ``DataFrame`` whose rows are source objects and whose columns are
+        reachable graph node ids. The normalized source mapping is stored in
+        ``result.attrs["source_nodes"]``.
     """
 
     _validate_max_workers(max_workers)
@@ -359,7 +338,7 @@ def dijkstra_path_length_parallel(
     if max_workers is not None:
         nb.set_num_threads(max_workers)
 
-    reachable_rows = dijkstra_numba_path_length_parallel(numba_adj_matrix, source_positions, _cutoff2int(cutoff))
+    reachable_rows = dijkstra_numba_path_length_parallel(numba_adj_matrix, source_positions, _cutoff2float(cutoff))
     rows, cols, values = coo_rows_to_arrays(reachable_rows)
 
     if len(values) > 0:
@@ -373,12 +352,12 @@ def dijkstra_path_length_parallel(
     )
 
     path_matrix = sparse.coo_matrix(
-        (_int_weight2float(values).astype(dtype), (rows, compact_cols)),
+        (values.astype(dtype), (rows, compact_cols)),
         shape=(len(source_nodes_s), len(reachable_columns)),
     ).tocsr()
     dense_result = np.full(path_matrix.shape, np.inf, dtype=dtype)
     if len(values) > 0:
-        dense_result[rows, compact_cols] = _int_weight2float(values).astype(dtype)
+        dense_result[rows, compact_cols] = values.astype(dtype)
 
     result = pd.DataFrame(
         dense_result,
@@ -402,48 +381,37 @@ def od_matrix(
     threshold: float | None = None,
     max_workers: int | None = None,
 ) -> pd.DataFrame:
-    """Считает OD-матрицу кратчайших путей по городскому графу.
+    """Compute an origin-destination shortest-path matrix on an ``UrbanGraph``.
 
-    Функция принимает либо готовые идентификаторы узлов графа
-    ``origins_nodes`` / ``destination_nodes``, либо таблицы
-    ``gdf_origins`` / ``gdf_destinations``. Если в таблице есть колонка
-    ``graph_node_column``, узлы берутся из нее. Если колонки нет, ближайшие
-    узлы графа ищутся по геометрии. Возвращает разреженный ``DataFrame``
-    расстояний или времени в пути.
-
-    Если в ``UrbanGraph`` еще нет актуальной матрицы смежности с выбранным
-    весом, функция вызовет
-    :meth:`iduedu.graph.urban_graph.UrbanGraph.update_adjacency_matrix`
-    автоматически. Для сервиса лучше делать это явно после изменения графа,
-    чтобы контролировать тяжелый этап подготовки.
+    Origins and destinations can be supplied either as graph node ids or as tables of
+    objects. Tables with ``graph_node_column`` use those node ids directly; otherwise
+    GeoDataFrame geometries are matched to nearest graph nodes. The helper builds or
+    reuses the graph adjacency matrix for the selected ``weight``.
 
     Args:
-        urban_graph: Городской граф с таблицами узлов, ребер и матрицей
-            смежности.
-        gdf_origins: Таблица объектов-источников.
-        gdf_destinations: Таблица объектов-назначений.
-        origins_nodes: Узлы-источники.
-        destination_nodes: Узлы-назначения.
-        graph_node_column: Имя колонки узла графа в обеих таблицах.
-        weight: Вес ребра для расчета: ``time_min`` или ``length_meter``.
-        dtype: Тип значений в возвращаемой матрице.
-        threshold: Максимальная стоимость пути. Единица измерения зависит от
-            ``weight``: минуты для ``time_min`` и метры для ``length_meter``.
-            Пары без пути или дальше порога получают ``np.inf``.
-        max_workers: Число параллельных потоков Numba для расчета.
+        urban_graph: Urban graph with node and edge tables.
+        gdf_origins: Table of origin objects.
+        gdf_destinations: Table of destination objects.
+        origins_nodes: Origin graph node ids.
+        destination_nodes: Destination graph node ids.
+        graph_node_column: Node id column used in origin and destination tables.
+        weight: Edge weight column, usually ``"time_min"`` or ``"length_meter"``.
+        dtype: Floating dtype for returned sparse values.
+        threshold: Optional maximum path cost. Pairs without a path or beyond the
+            threshold are represented as ``np.inf``.
+        max_workers: Optional number of numba worker threads.
 
     Returns:
-        Разреженный ``pandas.DataFrame``. Если переданы ``gdf_origins`` и
-        ``gdf_destinations``, индекс и колонки соответствуют индексам этих
-        таблиц. Если переданы ``origins_nodes`` и ``destination_nodes``,
-        индекс и колонки соответствуют спискам узлов.
+        Sparse ``DataFrame``. When object tables are passed, rows and columns follow
+        their indexes; when node lists are passed, rows and columns follow those node
+        lists.
 
     Raises:
-        TypeError: Если ``graph`` имеет неверный тип или ``max_workers``
-            не является целым числом.
-        ValueError: Если списки узлов пустые, порог отрицательный или узлы
-            отсутствуют в графе.
+        TypeError: If the graph type or ``max_workers`` is invalid.
+        ValueError: If inputs are empty, the threshold is negative or requested nodes
+            are absent from the graph.
     """
+
     _validate_max_workers(max_workers)
 
     if (gdf_origins is not None and graph_node_column not in gdf_origins.columns) or (
@@ -490,19 +458,22 @@ def od_matrix(
     destinations_pos = _node_positions(urban_graph, calc_destinations)
 
     dijkstra_numba_od_parallel(
-        numba_adj_matrix=csr_adj_matrix, origins=origins_pos[:1], destinations=destinations_pos[:1], cutoff=np.int32(0)
+        numba_adj_matrix=csr_adj_matrix,
+        origins=origins_pos[:1],
+        destinations=destinations_pos[:1],
+        cutoff=np.float32(0.0),
     )
 
     coo_rows = dijkstra_numba_od_parallel(
         numba_adj_matrix=csr_adj_matrix,
         origins=origins_pos,
         destinations=destinations_pos,
-        cutoff=_cutoff2int(threshold),
+        cutoff=_cutoff2float(threshold),
     )
 
     rows, cols, values = coo_rows_to_arrays(coo_rows)
     od_matrix = sparse.coo_matrix(
-        (_int_weight2float(values).astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
+        (values.astype(dtype), (rows, cols)), shape=(len(calc_origins), len(calc_destinations))
     ).tocsr()
 
     if transposed:

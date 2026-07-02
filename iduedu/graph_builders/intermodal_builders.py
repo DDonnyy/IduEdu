@@ -104,6 +104,7 @@ def join_pt_walk_graph(
                     node_attrs.loc[is_sequence, column] = node_attrs.loc[is_sequence, column].map(list)
 
                 def collapse_values(values):
+                    """Collapse equal values to a scalar and preserve multiple values as a list."""
                     unique_values = list(dict.fromkeys(values.dropna()))
                     if len(unique_values) == 1:
                         return unique_values[0]
@@ -217,10 +218,10 @@ def get_intermodal_graph(
         max_dist (float): Max distance in meters to connect PT platforms to walk edges.
         keep_largest_subgraph (bool): If True, keep only the largest strongly connected component after joining.
         walk_kwargs (dict[str, Any] | None): Extra keyword args for `get_walk_graph` (e.g., `walk_speed`,
-            `simplify`, `osm_edge_tags`, `keep_largest_subgraph`, …). Walk graph keep_largest_subgraph defaults to
+            `simplify`, `osm_edge_tags`, `keep_largest_subgraph`, ...). Walk graph keep_largest_subgraph defaults to
             False unless explicitly set here.
         pt_kwargs (dict[str, Any] | None): Extra keyword args for `get_public_transport_graph`
-            (e.g., `transport_types`, `osm_edge_tags`, `keep_edge_geometry`, …).
+            (e.g., `transport_types`, `osm_edge_tags`, `keep_edge_geometry`, ...).
 
     Returns:
         (nx.Graph): Intermodal `MultiDiGraph` combining public transport and pedestrian networks, with:
@@ -228,14 +229,14 @@ def get_intermodal_graph(
             - edge attrs: `type` (e.g., "walk", PT edge types), `length_meter`, `time_min`, optional `geometry`,
               and selected OSM tags.
 
-          Graph CRS equals the builders’ local projected CRS.
+          Graph CRS equals the builders' local projected CRS.
 
     Notes:
         - `keep_edge_geometry`, `clip_by_territory`, and `osm_edge_tags` are propagated to both builders unless
           overridden in `walk_kwargs`/`pt_kwargs`.
         - If the PT graph is empty for the area, the function returns the walking graph alone (with a warning).
         - Joining requires both sub-graphs to share the same CRS; builders derive a **local projected CRS**
-          from the boundary’s extent, so lengths/times are in meters/minutes.
+          from the boundary's extent, so lengths/times are in meters/minutes.
     """
     boundary = get_4326_boundary(osm_id=osm_id, territory=territory)
 

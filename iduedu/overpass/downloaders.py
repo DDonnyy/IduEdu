@@ -25,6 +25,7 @@ class RateLimiter:
     """Thread-safe fixed-interval rate limiter for Overpass requests."""
 
     def __init__(self, min_interval: float):
+        """Initialize the exception with request context."""
         self.min_interval = float(min_interval)
         self._next_ts = 0.0
         self._cv = threading.Condition()
@@ -36,7 +37,7 @@ class RateLimiter:
             while True:
                 now = monotonic()
                 if now >= self._next_ts:
-                    # фиксированное расписание слотов
+                    # Fixed slot schedule.
                     self._next_ts = max(self._next_ts, now) + self.min_interval
                     slept = monotonic() - start
                     # logger.info(f"GRANT; slept={slept:.3f}s; next_slot_in={self._next_ts - now:.3f}s")
@@ -72,6 +73,7 @@ class RequestError(RuntimeError):
     """
 
     def __init__(self, message, status_code=None, reason=None, response_text=None, response_content=None):
+        """Initialize the exception with request context."""
         super().__init__(message)
         self.status_code = status_code
         self.reason = reason
@@ -218,7 +220,7 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
                     {header}
                     (relation({osm_id}););
                     out geom;
-                    """
+    """
 
     cache_key_src = f"{config.overpass_url}\nGET\n{overpass_query}"
     json_result = cache_load("boundary", cache_key_src)
@@ -403,7 +405,7 @@ def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
                     {header}
                     (way{way_filter}(poly:"{polygon_coords}"););
                     out geom;
-                    """
+    """
     cache_key_src = f"{config.overpass_url}\nPOST\n{overpass_query}"
     json_root = cache_load("network", cache_key_src)
 

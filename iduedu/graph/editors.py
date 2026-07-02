@@ -12,24 +12,23 @@ from iduedu.graph.urban_graph import UrbanGraph
 
 @dataclass(slots=True)
 class UrbanGraphChanges:
-    """
-    Набор изменений, которые можно применить к ``UrbanGraph``.
+    """Set of table changes that can be applied to an ``UrbanGraph``.
 
-    Класс используется как промежуточный результат проецирования объектов на
-    граф. Он хранит новые узлы, новые ребра и ключи ребер, которые нужно
-    удалить из исходного графа перед добавлением разрезанных сегментов.
+    The class is used as an intermediate result when projecting objects onto a
+    graph. It stores new nodes, new edges and edge keys that should be removed from
+    the source graph before split edge segments are appended.
 
     Args:
-        edges_gdf: Новые ребра графа.
-        nodes_gdf: Новые узлы графа.
-        edges_to_delete: Таблица ключей ребер, которые нужно удалить.
-        is_multigraph: Должен совпадать с ``UrbanGraph.is_multigraph``.
-        is_directed: Флаг направленного графа. Для направленных графов ключи
-            ребер сопоставляются строго как ``u -> v``.
+        edges_gdf: New graph edges.
+        nodes_gdf: New graph nodes.
+        edges_to_delete: Edge-key table for edges that should be removed.
+        is_multigraph: Must match ``UrbanGraph.is_multigraph``.
+        is_directed: Whether edge keys should be interpreted as directed ``u -> v``
+            keys.
 
     Raises:
-        TypeError: Если таблицы переданы в неподдерживаемом типе.
-        ValueError: Если нарушены ключи или геометрии изменений.
+        TypeError: If change tables use unsupported types.
+        ValueError: If change keys or geometries are invalid.
     """
 
     edges_gdf: gpd.GeoDataFrame | None = None
@@ -297,43 +296,40 @@ def project_objects2urban_graph(
     max_dist: float | None = None,
     add_link_edge: bool = True,
 ) -> tuple[UrbanGraphChanges, pd.Series]:
-    """
-    Готовит изменения графа для подключения объектов к ближайшим ребрам.
+    """Prepare graph changes that connect objects to their nearest edges.
 
-    Функция не меняет исходный граф. Она вычисляет, какие узлы и ребра нужно
-    добавить, какие исходные ребра нужно удалить, и возвращает ``object2node``
-    маппинг. Для backend-сервиса это основной сценарий: ``changes`` можно
-    записать в таблицы графа в БД, а ``object2node_map`` - в таблицу объектов
-    как ``graph_node_id``. Для локальной копии графа результат можно применить
-    через :func:`apply_urban_graph_changes`.
+    The function does not mutate the source graph. It computes nodes and edges to
+    add, source edges to remove, and an ``object2node`` mapping. In backend services
+    this is the preferred low-level workflow: ``changes`` can be persisted to graph
+    tables and ``object2node_map`` can be saved on the object table as
+    ``graph_node_id``. For in-memory workflows, apply the result with
+    :func:`apply_urban_graph_changes`.
 
-    Проецирование выполняется по ``representative_point()`` объекта. Поэтому
-    функция одинаково подходит для зданий, сервисов и любых других слоев,
-    если у объектов есть уникальный индекс и геометрия.
+    Objects are projected by their ``representative_point()``, so the function works
+    for buildings, services and other polygon or point layers with a stable unique
+    index.
 
     Args:
-        graph_gdf: Исходный городской граф.
-        objects_gdf: Объекты для подключения к графу. Индекс должен быть
-            стабильным идентификатором объекта, например ``object_id`` или
-            ``building_id``.
-        speed_m_per_min: Скорость движения по добавляемым соединительным
-            ребрам в метрах в минуту. Например, ``5 * 1000 / 60`` для 5 км/ч.
-        max_dist: Максимальная дистанция от объекта до ближайшего ребра.
-            Если ``None``, ближайшее ребро ищется без ограничения.
-        add_link_edge: Если ``True``, создается отдельный узел объекта и
-            соединительное ребро до точки проекции. Если ``False``, объект
-            сопоставляется с самой точкой проекции на графе.
+        graph_gdf: Source urban graph.
+        objects_gdf: Objects to connect to the graph. The index should be a stable
+            object identifier, such as ``object_id`` or ``building_id``.
+        speed_m_per_min: Movement speed on created connector edges, in meters per
+            minute. For 5 km/h use ``5 * 1000 / 60``.
+        max_dist: Optional maximum distance from an object to the nearest edge. If
+            ``None``, nearest edges are searched without a distance limit.
+        add_link_edge: If ``True``, create a dedicated object node and connector
+            edge. If ``False``, map the object to the projection node on the graph.
 
     Returns:
-        Пара ``(changes, object2node_map)``. ``changes.nodes_gdf`` содержит
-        новые узлы, ``changes.edges_gdf`` - новые ребра,
-        ``changes.edges_to_delete`` - ключи заменяемых ребер.
-        ``object2node_map`` - ``Series`` с исходным индексом объектов и
-        идентификаторами узлов графа.
+        Pair ``(changes, object2node_map)``. ``changes.nodes_gdf`` contains new
+        nodes, ``changes.edges_gdf`` contains new edges, and
+        ``changes.edges_to_delete`` contains replaced edge keys. ``object2node_map``
+        is a ``Series`` indexed by the original object index with graph node ids as
+        values.
 
     Raises:
-        TypeError: Если ``objects_gdf`` не является ``GeoDataFrame``.
-        ValueError: Если объекты пустые или скорость неположительная.
+        TypeError: If ``objects_gdf`` is not a GeoDataFrame.
+        ValueError: If objects are empty or speed/distance parameters are invalid.
     """
 
     gdf_edges = graph_gdf.edges_gdf.copy()
@@ -456,7 +452,7 @@ def project_objects2urban_graph(
 
         object_to_existing_node = endpoint_rows.groupby("object_index", sort=False)["node2connect"].first()
 
-        # Привязка обьектов к углам эджей - существующим нодам
+        # Objects projected to edge endpoints are attached to existing graph nodes.
 
         for object_index, connect_node in object_to_existing_node.items():
             object_point = rep_gdf.loc[object_index, "geometry"]
@@ -521,7 +517,7 @@ def project_objects2urban_graph(
     projection_join["project_dist"] = projection_join["project_dist_group"]
     projection_join = projection_join.drop(columns="project_dist_group")
 
-    # Привязка обьектов к первой в группе(если образовалась) точке группировки
+    # Attach grouped objects to the first projection node in each group.
 
     for _, row in grouped_proj_points.iterrows():
         projection_node = row.projection_node_id
@@ -666,26 +662,24 @@ def project_objects2urban_graph(
 
 
 def apply_urban_graph_changes(graph_gdf: UrbanGraph, changes: UrbanGraphChanges) -> UrbanGraph:
-    """
-    Применяет подготовленные изменения к ``UrbanGraph``.
+    """Apply prepared changes to an ``UrbanGraph``.
 
-    Функция удаляет ребра из ``changes.edges_to_delete``, добавляет новые узлы
-    и ребра, затем возвращает новый ``UrbanGraph``. После применения изменений
-    сохраненная матрица смежности считается устаревшей; перед расчетом
-    доступности рекомендуется вручную вызвать
-    :meth:`iduedu.graph.urban_graph.UrbanGraph.update_adjacency_matrix`.
+    The function removes edges listed in ``changes.edges_to_delete``, appends new
+    nodes and edges, and returns a new graph. Any previously cached adjacency matrix
+    is considered stale after applying structural changes; rebuild it before running
+    routing or accessibility calculations.
 
     Args:
-        graph_gdf: Исходный граф.
-        changes: Изменения, подготовленные
-            :func:`project_objects2urban_graph` или созданные вручную.
+        graph_gdf: Source graph.
+        changes: Changes prepared by :func:`project_objects2urban_graph` or created
+            manually.
 
     Returns:
-        Новый ``UrbanGraph`` с примененными изменениями.
+        New ``UrbanGraph`` with changes applied.
 
     Raises:
-        ValueError: Если тип графа и тип изменений не совпадают, либо
-            ``edges_to_delete`` содержит отсутствующие в графе ребра.
+        ValueError: If graph and change topology flags differ or if
+            ``edges_to_delete`` references edges that are absent from the graph.
     """
 
     if graph_gdf.is_multigraph != changes.is_multigraph:

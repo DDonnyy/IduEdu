@@ -128,26 +128,24 @@ def to_undirected(graph: UrbanGraph) -> UrbanGraph:
 def simplify_multiedges(
     graph: UrbanGraph, *, weight: str = "time_min", rule: Literal["min", "max"] = "min"
 ) -> UrbanGraph:
-    """
-    Схлопывает мультиграф ``UrbanGraph`` до обычного графа.
+    """Collapse a multigraph ``UrbanGraph`` into a simple graph.
 
-    Для каждой пары узлов выбирается одно ребро по весу ``weight``. Правило
-    ``min`` оставляет ребро с минимальным весом, ``max`` - с максимальным.
-    Метод :meth:`iduedu.graph.urban_graph.UrbanGraph.simplify_multiedges`
-    вызывает эту функцию внутри.
+    For each node pair, one edge is selected according to ``weight`` and ``rule``.
+    ``rule="min"`` keeps the edge with the smallest weight, while ``rule="max"``
+    keeps the edge with the largest weight.
 
     Args:
-        graph: Исходный городской граф.
-        weight: Колонка веса для выбора ребра.
-        rule: Правило выбора ребра: ``min`` или ``max``.
+        graph: Source urban graph.
+        weight: Edge column used to choose the representative edge.
+        rule: Selection rule, either ``"min"`` or ``"max"``.
 
     Returns:
-        Новый ``UrbanGraph`` с ``is_multigraph=False``.
+        New ``UrbanGraph`` with ``is_multigraph=False``.
 
     Raises:
-        TypeError: Если ``graph`` не является ``UrbanGraph``.
-        KeyError: Если колонки ``weight`` нет в ребрах.
-        ValueError: Если вес содержит ``NaN`` или правило неизвестно.
+        TypeError: If ``graph`` is not an ``UrbanGraph``.
+        KeyError: If ``weight`` is absent from ``edges_gdf``.
+        ValueError: If weights contain ``NaN`` or ``rule`` is unsupported.
     """
 
     if not isinstance(graph, UrbanGraph):
