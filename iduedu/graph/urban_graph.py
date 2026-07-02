@@ -16,37 +16,36 @@ from iduedu.graph.validation import (
 
 
 class UrbanGraph:
-    """
-    Табличное представление городского транспортного графа.
+    """Tabular representation of an urban transport graph.
 
-    ``UrbanGraph`` хранит узлы и ребра графа в ``GeoDataFrame``-таблицах и
-    строит CSR-матрицу смежности для быстрых расчетов OD-матриц доступности.
-    По умолчанию основным весом считается ``time_min``: это время движения по
-    ребру в минутах. ``length_meter`` используется как альтернативный вес в
-    метрах.
+    ``UrbanGraph`` stores nodes and edges as pandas-compatible tables and
+    builds SciPy CSR adjacency matrices for shortest-path and OD-matrix
+    calculations. Spatial graphs use ``GeoDataFrame`` tables: nodes are points,
+    edges are lines, and both tables share the graph CRS.
 
     Args:
-        nodes_gdf: Таблица узлов. Индекс таблицы является идентификатором узла
-            и должен быть уникальным. Для географических сценариев ожидается
-            ``GeoDataFrame`` с точечной геометрией.
-        edges_gdf: Таблица ребер. Обязательные колонки: ``u``, ``v``,
-            ``geometry``, ``length_meter`` и ``time_min``. Для мультиграфа
-            дополнительно нужна колонка ``k``. Колонки ``u`` и ``v`` ссылаются
-            на индекс ``nodes_gdf``.
-        is_multigraph: Флаг мультиграфа. Если ``True``, между двумя узлами
-            может быть несколько ребер с разными ключами ``k``.
-        is_directed: Флаг направленного графа. Если ``True``, матрица
-            смежности строится только по направлению ``u -> v``.
-        edge_direction_column: Имя булевой колонки ребер с признаком
-            одностороннего движения. ``True`` означает только ``u -> v``,
-            ``False`` означает движение в обе стороны. Если задана, граф
-            считается направленным для расчетов матрицы смежности.
-        adjacency_weight: Вес, который будет использоваться при построении
-            матрицы смежности по умолчанию.
+        nodes_gdf: Node table. Its index is the node id and must be unique.
+            Spatial graphs should use point geometries.
+        edges_gdf: Edge table. Required columns are ``u``, ``v``,
+            ``geometry``, ``length_meter`` and ``time_min``. Multigraphs also
+            require ``k``. Edge endpoint columns reference ``nodes_gdf.index``.
+        is_multigraph: Whether multiple edges may exist between the same node
+            pair. If true, ``(u, v, k)`` uniquely identifies an edge.
+        is_directed: Whether edge direction is respected by adjacency-based
+            algorithms.
+        edge_direction_column: Optional boolean edge column. ``True`` means
+            movement is allowed only from ``u`` to ``v``; ``False`` means both
+            directions are allowed.
+        adjacency_weight: Default edge column used when building weighted
+            adjacency matrices.
+        crs: Optional graph CRS. If omitted, it is inferred from GeoDataFrames
+            when possible.
+        graph_type: Optional semantic graph type such as ``"drive"``,
+            ``"walk"`` or ``"intermodal"``.
 
     Raises:
-        TypeError: Если таблицы имеют неподдерживаемый тип.
-        ValueError: Если нарушены контракты таблиц графа.
+        TypeError: If node or edge tables use unsupported types.
+        ValueError: If graph table contracts are violated.
     """
 
     __slots__ = (
@@ -107,6 +106,7 @@ class UrbanGraph:
         adjacency_weight: str = "time_min",
         graph_type: str | None = None,
     ) -> "UrbanGraph":
+        """Create an empty graph with the requested topology metadata."""
         nodes_gdf = gpd.GeoDataFrame(geometry=gpd.GeoSeries([], crs=crs), crs=crs)
         edge_columns = ["u", "v", "geometry", "length_meter", "time_min"]
         if is_multigraph:
@@ -150,15 +150,7 @@ class UrbanGraph:
         self._validate_nodes_edges()
 
     def copy(self) -> "UrbanGraph":
-        """
-        Возвращает независимую копию графа.
-
-        Копируются таблицы узлов и ребер, а также уже построенная матрица
-        смежности, если она была рассчитана ранее.
-
-        Returns:
-            Новый объект ``UrbanGraph`` с тем же состоянием.
-        """
+        """Return an independent copy of the graph and cached adjacency state."""
 
         graph = UrbanGraph(
             nodes_gdf=self.nodes_gdf.copy(),
@@ -206,29 +198,21 @@ class UrbanGraph:
         weight: str | None = None,
         multigraph_rule: Literal["min", "max"] = "min",
     ) -> sparse.csr_matrix:
-        """
-        Перестраивает и сохраняет матрицу смежности графа.
-
-        Метод нужен после любых изменений ``nodes_gdf`` или ``edges_gdf``:
-        проецирования объектов на граф, удаления или добавления ребер, смены
-        веса расчета. Сохраненная матрица используется
-        :func:`lprp.models.accessibility.graph_od_matrix.get_od_matrix`.
+        """Rebuild and store the graph adjacency matrix.
 
         Args:
-            nodelist: Список узлов, которые нужно включить в матрицу. Если
-                ``None``, используются все узлы графа.
-            weight: Колонка веса ребра. Обычно ``time_min`` для времени в
-                минутах или ``length_meter`` для расстояния в метрах.
-            multigraph_rule: Правило схлопывания параллельных ребер в
-                мультиграфе: ``min`` выбирает минимальный вес, ``max`` -
-                максимальный.
+            nodelist: Node ids to include in matrix order. If omitted, all
+                graph nodes are used.
+            weight: Edge weight column. If omitted, ``adjacency_weight`` is
+                used.
+            multigraph_rule: Aggregation rule for parallel edges.
 
         Returns:
-            CSR-матрица смежности ``scipy.sparse.csr_matrix``.
+            Built SciPy CSR adjacency matrix.
 
         Raises:
-            KeyError: Если колонки ``weight`` нет в ``edges_gdf``.
-            ValueError: Если список узлов пустой или вес содержит ``NaN``.
+            KeyError: If ``weight`` is not present in ``edges_gdf``.
+            ValueError: If edge weights are invalid.
         """
 
         if nodelist is None:
@@ -255,24 +239,17 @@ class UrbanGraph:
         weight: str | None = None,
         multigraph_rule: Literal["min", "max"] = "min",
     ) -> sparse.csr_matrix:
-        """
-        Строит CSR-матрицу смежности без изменения состояния графа.
-
-        В отличие от :meth:`update_adjacency_matrix`, этот метод просто
-        возвращает матрицу и не обновляет ``adjacency_matrix`` внутри
-        ``UrbanGraph``. Его удобно использовать для разовых расчетов или
-        проверки альтернативного веса.
+        """Build a CSR adjacency matrix without changing graph state.
 
         Args:
-            nodelist: Список узлов для матрицы. Если ``None``, используются все
-                узлы.
-            weight: Колонка веса ребра. Если ``None``, используется
-                ``adjacency_weight``.
-            multigraph_rule: Правило выбора ребра в мультиграфе: ``min`` или
-                ``max``.
+            nodelist: Node ids to include in matrix order. If omitted, all
+                graph nodes are used.
+            weight: Edge weight column. If omitted, ``adjacency_weight`` is
+                used.
+            multigraph_rule: Aggregation rule for parallel edges.
 
         Returns:
-            CSR-матрица смежности ``scipy.sparse.csr_matrix``.
+            Built SciPy CSR adjacency matrix.
         """
 
         if nodelist is None:

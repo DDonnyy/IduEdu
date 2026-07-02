@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class Network(Enum):
+    """Preset OpenStreetMap network filters used by graph builders."""
 
     DRIVE = "drive"
     DRIVE_SERVICE = "drive_service"
@@ -9,6 +10,7 @@ class Network(Enum):
 
     @property
     def filter(self) -> str:
+        """Return the Overpass way filter associated with this network type."""
         speeds = {
             Network.DRIVE: (
                 f'["highway"]["area"!~"yes"]["access"!~"private"]'

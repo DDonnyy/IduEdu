@@ -80,7 +80,7 @@ def graph2gdf(
     except KeyError as exc:
         raise ValueError("Graph does not have crs attribute and no crs was provided") from exc
     if not edges and not nodes:
-        logger.debug("Neither edges or nodes were selected, graph_to_gdf returning None")
+        logger.debug("Neither edges or nodes were selected, graph2gdf returning None")
         return None
     if nodes and not edges:
         return _nodes_to_gdf(graph, crs)

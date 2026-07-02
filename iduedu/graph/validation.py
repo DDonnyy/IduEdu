@@ -5,6 +5,7 @@ import pandas as pd
 
 
 def gdf_crs(frame) -> Any | None:
+    """Return a GeoDataFrame CRS or ``None`` for non-geospatial frames."""
     if not isinstance(frame, gpd.GeoDataFrame):
         return None
     try:
@@ -14,6 +15,11 @@ def gdf_crs(frame) -> Any | None:
 
 
 def sync_graph_crs(graph) -> None:
+    """Synchronize graph, node and edge CRS metadata.
+
+    Raises:
+        ValueError: If node and edge CRS values conflict with the graph CRS.
+    """
     nodes_crs = gdf_crs(graph.nodes_gdf)
     edges_crs = gdf_crs(graph.edges_gdf)
     inferred_crs = graph.crs or nodes_crs or edges_crs
@@ -35,6 +41,12 @@ def sync_graph_crs(graph) -> None:
 
 
 def validate_nodes(graph) -> None:
+    """Validate the node table contract of an ``UrbanGraph``.
+
+    Raises:
+        TypeError: If ``nodes_gdf`` is not a DataFrame-like object.
+        ValueError: If node ids are duplicated or geometries are invalid.
+    """
     nodes = graph.nodes_gdf
     if not isinstance(nodes, (gpd.GeoDataFrame, pd.DataFrame)):
         raise TypeError(f"nodes_gdf must be DataFrame or GeoDataFrame, got {type(nodes).__name__}")
@@ -48,6 +60,12 @@ def validate_nodes(graph) -> None:
 
 
 def validate_edges(graph) -> None:
+    """Validate the edge table contract of an ``UrbanGraph``.
+
+    Raises:
+        TypeError: If ``edges_gdf`` is not a DataFrame-like object.
+        ValueError: If required columns, topology keys or geometries are invalid.
+    """
     edges = graph.edges_gdf
     if not isinstance(edges, (gpd.GeoDataFrame, pd.DataFrame)):
         raise TypeError(f"edges_gdf must be DataFrame or GeoDataFrame, got {type(edges).__name__}")
@@ -83,6 +101,7 @@ def validate_edges(graph) -> None:
 
 
 def validate_nodes_edges(graph) -> None:
+    """Validate consistency between node ids, edge endpoints and CRS values."""
     nodes = graph.nodes_gdf
     edges = graph.edges_gdf
 

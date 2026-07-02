@@ -33,6 +33,7 @@ class HighwayType(Enum):
 
     @property
     def reg_status(self) -> Literal["federal", "regional", "local"]:
+        """Return the default administrative category for this highway type."""
         reg_status = {
             HighwayType.MOTORWAY: RegistrationStatus.FEDERAL,
             HighwayType.TRUNK: RegistrationStatus.FEDERAL,

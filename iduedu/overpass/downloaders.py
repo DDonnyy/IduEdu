@@ -22,12 +22,15 @@ from time import monotonic
 
 
 class RateLimiter:
+    """Thread-safe fixed-interval rate limiter for Overpass requests."""
+
     def __init__(self, min_interval: float):
         self.min_interval = float(min_interval)
         self._next_ts = 0.0
         self._cv = threading.Condition()
 
     def wait(self):
+        """Block until the next request slot is available."""
         start = monotonic()
         with self._cv:
             while True:
@@ -209,6 +212,7 @@ def _overpass_request(
 
 
 def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
+    """Download an OSM relation boundary and convert it to a Shapely geometry."""
     header = config.overpass_header
     overpass_query = f"""
                     {header}
@@ -306,6 +310,7 @@ def _poly_to_overpass(poly: Polygon) -> str:
 
 
 def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> list[dict]:
+    """Download public-transport route elements intersecting a polygon."""
     public_transport_types = sorted(set(public_transport_types))
 
     if not public_transport_types:
@@ -391,6 +396,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> l
 
 
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
+    """Download OSM way elements matching an Overpass filter inside a polygon."""
     polygon_coords = _poly_to_overpass(polygon)
     header = config.overpass_header
     overpass_query = f"""

@@ -151,6 +151,7 @@ def _graph_data_to_urban_graph(
     missing_oneway = graph_edges_gdf["oneway"].isna()
     if missing_oneway.any():
         logger.warning(f"Filling {int(missing_oneway.sum())} PT edges with missing oneway values")
+        graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(object)
         graph_edges_gdf.loc[missing_oneway, "oneway"] = (
             ~graph_edges_gdf.loc[missing_oneway, "type"].astype(str).eq("boarding")
         )

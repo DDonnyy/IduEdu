@@ -1,7 +1,6 @@
 PACKAGE := iduedu
 TESTS := tests
-SCRIPTS := scripts
-FORMAT_PATHS := $(PACKAGE) $(TESTS) $(SCRIPTS)
+FORMAT_PATHS := $(PACKAGE) $(TESTS)
 PYTHON ?= python
 UV ?= uv
 UV_RUN ?= $(UV) run
@@ -9,8 +8,7 @@ COVERAGE_XML ?= coverage.xml
 COVERAGE_HTML ?= htmlcov
 
 .PHONY: help install install-dev lock update lint format format-check test test-unit test-numba test-network test-all \
-        coverage coverage-xml coverage-html coverage-numba docs clean build publish \
-        sync-version-file version-check version-patch version-minor version-major tag push-tag release
+        coverage coverage-xml coverage-html coverage-numba docs clean build publish version version-next changelog
 
 help:
 	@echo "Available targets:"
@@ -25,16 +23,15 @@ help:
 	@echo "  test-network      - run opt-in network tests only"
 	@echo "  test-all          - run all tests, including network tests"
 	@echo "  coverage          - run fast tests with terminal coverage report"
-	@echo "  coverage-xml      - run fast tests and write coverage.xml for CI/Codecov"
+	@echo "  coverage-xml      - run all tests (incl. network) and write coverage.xml for CI/Codecov"
 	@echo "  coverage-html     - run fast tests and write HTML coverage report"
 	@echo "  coverage-numba    - run Numba tests and show Numba coverage only"
 	@echo "  docs              - build documentation"
 	@echo "  build             - build wheel and sdist with uv"
 	@echo "  publish           - publish package with uv"
-	@echo "  version-check     - compare pyproject version with $(PACKAGE)/_version.py"
-	@echo "  version-patch     - bump patch version and sync $(PACKAGE)/_version.py"
-	@echo "  version-minor     - bump minor version and sync $(PACKAGE)/_version.py"
-	@echo "  version-major     - bump major version and sync $(PACKAGE)/_version.py"
+	@echo "  version           - print the current version (from $(PACKAGE)/_version.py)"
+	@echo "  version-next      - print the next version semantic-release would compute (no changes)"
+	@echo "  changelog         - regenerate CHANGELOG.md from commit history (no release)"
 
 install:
 	$(PYTHON) -m pip install .
@@ -81,7 +78,7 @@ coverage:
 
 coverage-xml:
 	$(UV_RUN) python -m coverage erase
-	$(UV_RUN) python -m coverage run -m pytest -q
+	$(UV_RUN) python -m coverage run -m pytest --run-network -q
 	$(UV_RUN) python -m coverage xml -o $(COVERAGE_XML)
 	$(UV_RUN) python -m coverage report -m
 
@@ -108,32 +105,13 @@ build:
 publish:
 	$(UV) publish
 
-sync-version-file:
-	$(PYTHON) scripts/sync_version.py
+# Releases are automated on push to main (python-semantic-release); see CONTRIBUTING.md.
+# These targets are read-only helpers for inspecting versioning locally.
+version:
+	$(UV_RUN) python -c "from iduedu._version import VERSION; print(VERSION)"
 
-version-check:
-	$(PYTHON) scripts/check_version.py
+version-next:
+	$(UV_RUN) semantic-release --noop version --print
 
-version-patch:
-	$(UV) version --bump patch --no-sync
-	$(MAKE) sync-version-file
-
-version-minor:
-	$(UV) version --bump minor --no-sync
-	$(MAKE) sync-version-file
-
-version-major:
-	$(UV) version --bump major --no-sync
-	$(MAKE) sync-version-file
-
-VERSION := $(shell $(PYTHON) -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-
-tag:
-	git tag v$(VERSION)
-	@echo "Created tag v$(VERSION)"
-
-push-tag:
-	git push origin v$(VERSION)
-
-release: version-check tag push-tag
-	@echo "Tagged and pushed v$(VERSION)."
+changelog:
+	$(UV_RUN) semantic-release changelog

@@ -22,6 +22,7 @@ if bcsr_type is not None:
 
 @_njit(_connected_components_signature, cache=True)
 def connected_components_numba(adj_matrix: BCSRMatrix):
+    """Label connected components in a boolean CSR adjacency matrix."""
     labels = np.full(adj_matrix.tot_rows, -1, dtype=np.int32)
     stack = np.empty(adj_matrix.tot_rows, dtype=np.int32)
     component_id = np.int32(0)
@@ -53,6 +54,7 @@ def connected_components_numba(adj_matrix: BCSRMatrix):
 
 @_njit(_strongly_connected_components_signature, cache=True)
 def strongly_connected_components_numba(adj_matrix: BCSRMatrix, reverse_adj_matrix: BCSRMatrix):
+    """Label strongly connected components using iterative Kosaraju traversal."""
     visited = np.zeros(adj_matrix.tot_rows, dtype=np.bool_)
     order = np.empty(adj_matrix.tot_rows, dtype=np.int32)
     order_size = 0

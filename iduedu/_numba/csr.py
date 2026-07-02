@@ -46,6 +46,7 @@ except Exception:
 
 
 def sparse_row2numba_matrix(sparse_row_scipy):
+    """Convert a SciPy CSR matrix to the uint32 Numba CSR jitclass."""
     values = sparse_row_scipy.data.astype(np.uint32, copy=False)
     col_index = sparse_row_scipy.indices.astype(np.uint32, copy=False)
     row_index = sparse_row_scipy.indptr.astype(np.uint32, copy=False)
@@ -53,6 +54,7 @@ def sparse_row2numba_matrix(sparse_row_scipy):
 
 
 def sparse_row2numba_bool_matrix(sparse_row_scipy):
+    """Convert a SciPy CSR matrix to the boolean Numba CSR jitclass."""
     values = sparse_row_scipy.data.astype(bool, copy=False)
     col_index = sparse_row_scipy.indices.astype(np.uint32, copy=False)
     row_index = sparse_row_scipy.indptr.astype(np.uint32, copy=False)
@@ -60,6 +62,7 @@ def sparse_row2numba_bool_matrix(sparse_row_scipy):
 
 
 def coo_rows_to_arrays(coo_rows: list) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Flatten row-wise COO pairs into row, column and value arrays."""
     nnz = sum(len(row) for row in coo_rows)
 
     rows = np.empty(nnz, dtype=np.int32)

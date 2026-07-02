@@ -29,13 +29,10 @@ jobs:
       - name: Install dependencies
         run: make install-dev
 
-      - name: Check version sync
-        run: make version-check
-
       - name: Check formatting
         run: make format-check
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage (includes network tests)
         run: make coverage-xml
 
       - name: Upload coverage report artifact

@@ -108,6 +108,7 @@ def _dijkstra_numba_distances(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarr
 
 @_njit(_single_source_signature, cache=True)
 def single_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, origin: np.int32, cutoff: np.int32):
+    """Run single-source Dijkstra and return reachable node distances."""
     seen = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     fringe = List.empty_list(coo_pair_type)
     seen[origin] = np.int32(0)
@@ -124,6 +125,7 @@ def single_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, or
 
 @_njit(_multi_source_signature, cache=True)
 def multi_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, sources: np.ndarray, cutoff: np.int32):
+    """Run multi-source Dijkstra and return nearest-source distances."""
     distances = _dijkstra_numba_distances(numba_adj_matrix, sources, cutoff)
 
     row = List.empty_list(coo_pair_type)
@@ -136,6 +138,7 @@ def multi_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, sou
 
 @_njit(_nearest_source_signature, cache=True)
 def multi_source_dijkstra_numba_nearest_source(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32):
+    """Run multi-source Dijkstra and return nearest source ids with distances."""
     distances = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     seen = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     seen_source = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
@@ -176,6 +179,7 @@ def multi_source_dijkstra_numba_nearest_source(numba_adj_matrix: UI32CSRMatrix, 
 def dijkstra_numba_od_parallel(
     numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, destinations: np.ndarray, cutoff: np.int32
 ):
+    """Compute sparse OD rows for many origins in parallel."""
     result = List.empty_list(coo_row_type)
     for _ in range(len(origins)):
         result.append(List.empty_list(coo_pair_type))
@@ -197,6 +201,7 @@ def dijkstra_numba_od_parallel(
 
 @_njit(_path_parallel_signature, cache=True, parallel=True)
 def dijkstra_numba_path_length_parallel(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32):
+    """Compute sparse path-length rows for many origins in parallel."""
     result = List.empty_list(coo_row_type)
     for _ in range(len(origins)):
         result.append(List.empty_list(coo_pair_type))

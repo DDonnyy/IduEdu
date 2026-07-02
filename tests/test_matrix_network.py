@@ -14,9 +14,9 @@ pytestmark = [pytest.mark.network, pytest.mark.slow]
 @pytest.fixture(scope="module")
 def sample_data():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    data_path = os.path.join(current_dir, "../../docs/examples/data/spb_buildings.parquet")
+    data_path = os.path.join(current_dir, "../docs/examples/data/spb_buildings.parquet")
     if not os.path.exists(data_path):
-        raise FileNotFoundError(f"Файл {data_path} не найден!")
+        raise FileNotFoundError(f"File {data_path} not found!")
     return gpd.read_parquet(data_path).head(8)
 
 

@@ -87,33 +87,53 @@ def strongly_connected_components(graph: UrbanGraph) -> list[set[Any]]:
 
 
 def number_connected_components(graph: UrbanGraph) -> int:
+    """Return the number of connected components in an undirected graph."""
     return len(connected_components(graph))
 
 
 def number_weakly_connected_components(graph: UrbanGraph) -> int:
+    """Return the number of weakly connected components."""
     return len(weakly_connected_components(graph))
 
 
 def number_strongly_connected_components(graph: UrbanGraph) -> int:
+    """Return the number of strongly connected components."""
     return len(strongly_connected_components(graph))
 
 
 def largest_connected_component(graph: UrbanGraph) -> set[Any]:
+    """Return the largest connected component of an undirected graph."""
     components = connected_components(graph)
     return components[0] if components else set()
 
 
 def largest_weakly_connected_component(graph: UrbanGraph) -> set[Any]:
+    """Return the largest weakly connected component."""
     components = weakly_connected_components(graph)
     return components[0] if components else set()
 
 
 def largest_strongly_connected_component(graph: UrbanGraph) -> set[Any]:
+    """Return the largest strongly connected component."""
     components = strongly_connected_components(graph)
     return components[0] if components else set()
 
 
 def largest_component(graph: UrbanGraph, mode: ComponentMode = "auto") -> set[Any]:
+    """Return the largest component according to the selected connectivity mode.
+
+    Args:
+        graph: Graph to inspect.
+        mode: Connectivity mode. ``"auto"`` selects ``"strong"`` for directed
+            graphs and ``"connected"`` for undirected graphs.
+
+    Returns:
+        Set of node ids in the largest component. Returns an empty set for an
+        empty graph.
+
+    Raises:
+        ValueError: If ``mode`` is not supported.
+    """
     _validate_graph(graph)
     if mode == "auto":
         mode = "strong" if graph.is_directed else "connected"

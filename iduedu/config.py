@@ -13,9 +13,7 @@ LogLevel = Literal["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class Config:
-    """
-    Global settings: Overpass endpoint(s), timeouts, logging, tag sets, and rate limiting.
-    """
+    """Global runtime settings for Overpass, caching, logging and graph builders."""
 
     def __init__(self):
         # --- Overpass endpoints ---
@@ -106,6 +104,14 @@ class Config:
             self.overpass_cache_dir = cache_dir
 
     def set_timeout(self, timeout: int):
+        """Set the default Overpass request timeout in seconds.
+
+        Args:
+            timeout: Positive timeout value in seconds.
+
+        Raises:
+            ValueError: If ``timeout`` is not positive.
+        """
         if timeout <= 0:
             raise ValueError("timeout must be > 0")
         self.timeout = int(timeout)
@@ -197,10 +203,20 @@ class Config:
         self.overpass_date = f"{d.isoformat()}T00:00:00Z"
 
     def build_overpass_header(self, *, timeout: int | None = None, date: str | None = None) -> str:
-        """
-        Собрать заголовок Overpass, например:
-            [out:json][timeout:120];
-            [out:json][timeout:120][date:"2020-01-01T00:00:00Z"];
+        """Build the Overpass query header for JSON requests.
+
+        Args:
+            timeout: Optional timeout override in seconds. If omitted, the
+                configured default timeout is used.
+            date: Optional Overpass snapshot date override in ISO UTC format.
+                If omitted, ``self.overpass_date`` is used.
+
+        Returns:
+            Header string such as ``[out:json][timeout:120];`` or
+            ``[out:json][timeout:120][date:"2020-01-01T00:00:00Z"];``.
+
+        Raises:
+            ValueError: If the effective timeout is not positive.
         """
         t = int(timeout) if timeout is not None else int(self.timeout)
         if t <= 0:
@@ -215,23 +231,39 @@ class Config:
 
     @property
     def overpass_header(self) -> str:
+        """Current default Overpass query header."""
         return self.build_overpass_header()
 
     def set_enable_tqdm(self, enable: bool):
+        """Enable or disable progress bars for long-running operations."""
         self.enable_tqdm_bar = bool(enable)
 
     def set_drive_useful_edges_attr(self, attr: Iterable[str]):
+        """Set OSM edge tags retained by drive graph builders."""
         self.drive_useful_edges_attr = frozenset(attr)
 
     def set_walk_useful_edges_attr(self, attr: Iterable[str]):
+        """Set OSM edge tags retained by walk graph builders."""
         self.walk_useful_edges_attr = frozenset(attr)
 
     def set_transport_useful_edges_attr(self, attr: Iterable[str]):
+        """Set OSM edge tags retained by public-transport graph builders."""
         self.transport_useful_edges_attr = frozenset(attr)
 
     def set_rate_limit(
         self, *, min_interval: float | None = None, max_retries: int | None = None, backoff_base: float | None = None
     ):
+        """Configure Overpass request pacing and retry behavior.
+
+        Args:
+            min_interval: Minimum delay between Overpass requests in seconds.
+            max_retries: Maximum number of retry attempts for retryable HTTP
+                statuses.
+            backoff_base: Base multiplier for exponential retry backoff.
+
+        Raises:
+            ValueError: If any provided value is outside its accepted range.
+        """
         if min_interval is not None:
             if min_interval < 0:
                 raise ValueError("min_interval must be >= 0")
@@ -246,6 +278,7 @@ class Config:
             self.overpass_backoff_base = float(backoff_base)
 
     def to_dict(self) -> dict:
+        """Return a serializable snapshot of the current configuration."""
         return {
             "overpass_url": self.overpass_url,
             "timeout": self.timeout,

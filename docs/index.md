@@ -4,6 +4,7 @@
 :maxdepth: 2
 
 High-level functions <api/high_level>
+Graph data model <api/graph_data_model>
 Transport registry <api/transport_registry>
 Graph utilities <api/utilities>
 Matrices <api/matrices>
@@ -33,8 +34,8 @@ Examples <examples/index>
   - Local UTM estimation for accurate metric lengths
   - Safe graph ↔ GeoDataFrame conversion; optional geometry restoration
 - **Matrices**
-  - `get_od_matrix_gdf_to_gdf` — OD matrices by length/time using Numba accelerated Dijkstra
-  - `get_closest_nodes` — nearest node snapping
+  - `od_matrix` — OD matrices by length/time using Numba accelerated Dijkstra
+  - `multi_source_dijkstra_nearest_source` — nearest source lookup on graph nodes
 - **Utilities**
   - `clip_nx_graph`, `reproject_graph`, `read_gml`/`write_gml`, etc.
 
@@ -65,14 +66,18 @@ G = get_intermodal_graph(osm_id=1114252)  # e.g., Saint Petersburg, Vasileostrov
 
 ```python
 import geopandas as gpd
-from iduedu import get_od_matrix_gdf_to_gdf
+from iduedu import od_matrix
 
-# origins/destinations can be any geometries; representative points are used
-origins = gpd.GeoDataFrame(geometry=[...], crs=...)
-destinations = gpd.GeoDataFrame(geometry=[...], crs=...)
+# origins/destinations contain projected points already attached to graph nodes
+origins = gpd.GeoDataFrame({"graph_node_id": [...]}, geometry=[...], crs=G.crs)
+destinations = gpd.GeoDataFrame({"graph_node_id": [...]}, geometry=[...], crs=G.crs)
 
-M = get_od_matrix_gdf_to_gdf(
-    origins, destinations, G, weight="time_min", dtype="float32", threshold=None
+M = od_matrix(
+    G,
+    gdf_sources=origins,
+    gdf_targets=destinations,
+    weight="time_min",
+    dtype="float32",
 )
 print(M.head())
 ```

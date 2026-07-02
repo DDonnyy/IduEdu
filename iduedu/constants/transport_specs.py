@@ -34,6 +34,12 @@ class TransportSpec:
     traffic_coef: float = 1.0
 
     def validate(self) -> None:
+        """Validate transport specification fields.
+
+        Raises:
+            ValueError: If a required field is missing or outside the supported
+            range.
+        """
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("TransportSpec.name must be a non-empty string")
 
@@ -140,6 +146,15 @@ class TransportRegistry:
         return name.strip().lower()
 
     def get(self, name: str) -> TransportSpec:
+        """Return a transport specification by name.
+
+        Args:
+            name: Transport type name. Matching is case-insensitive and ignores
+                surrounding whitespace.
+
+        Raises:
+            KeyError: If the transport type is unknown.
+        """
         key = self._norm_key(name)
         try:
             return self._specs[key]
@@ -147,9 +162,20 @@ class TransportRegistry:
             raise KeyError(f"Unknown transport type: {name!r}") from e
 
     def try_get(self, name: str) -> TransportSpec | None:
+        """Return a transport specification, or ``None`` if it is unknown."""
         return self._specs.get(self._norm_key(name))
 
     def add(self, spec: TransportSpec, *, overwrite: bool = False) -> None:
+        """Add a transport specification to the registry.
+
+        Args:
+            spec: Specification to add.
+            overwrite: If true, replace an existing specification with the
+                same normalized name.
+
+        Raises:
+            ValueError: If ``spec`` is invalid or already exists.
+        """
         spec = replace(spec, name=self._norm_key(spec.name))
         spec.validate()
         if (spec.name in self._specs) and not overwrite:
@@ -157,6 +183,19 @@ class TransportRegistry:
         self._specs[spec.name] = spec
 
     def update(self, transport_type: str, **fields) -> TransportSpec:
+        """Update fields of an existing transport specification.
+
+        Args:
+            transport_type: Existing transport type name.
+            **fields: Dataclass fields to update.
+
+        Returns:
+            Updated transport specification.
+
+        Raises:
+            KeyError: If ``transport_type`` is unknown.
+            ValueError: If updated fields are invalid or rename conflicts.
+        """
         key = self._norm_key(transport_type)
         cur = self.get(key)
         if "name" in fields:
@@ -172,10 +211,20 @@ class TransportRegistry:
         return nxt
 
     def remove(self, name: str) -> None:
+        """Remove a transport specification by name."""
         key = self._norm_key(name)
         del self._specs[key]
 
     def ensure(self, name: str, *, defaults: TransportSpec | None = None) -> TransportSpec:
+        """Return an existing spec or create one from defaults.
+
+        Args:
+            name: Transport type name.
+            defaults: Optional specification used when the name is missing.
+
+        Returns:
+            Existing or newly registered transport specification.
+        """
         key = self._norm_key(name)
         spec = self._specs.get(key)
         if spec:
@@ -193,6 +242,7 @@ class TransportRegistry:
         return self._specs[key]
 
     def list_types(self):
+        """Return registered transport type names."""
         return list(self._specs.keys())
 
 

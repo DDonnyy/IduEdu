@@ -21,6 +21,7 @@ THRESHOLD_METERS = 100
 
 
 def parse_maxspeed_to_m_per_min(raw: str | int | float | None) -> float | None:
+    """Parse an OSM ``maxspeed`` value into meters per minute."""
 
     if raw is None:
         return None
@@ -53,6 +54,8 @@ def parse_maxspeed_to_m_per_min(raw: str | int | float | None) -> float | None:
 
 
 def overpass_routes_to_df(json_routes: list[dict], enable_subway_details: bool) -> pd.DataFrame:
+    """Normalize raw Overpass route elements into a parser DataFrame."""
+
     def _compute_way_speed(tags: dict) -> float:
         highway = tags.get("highway")
         if not highway:
@@ -118,6 +121,7 @@ def overpass_routes_to_df(json_routes: list[dict], enable_subway_details: bool) 
 
 
 def transform_geometry(loc, transformer):
+    """Transform an Overpass node or way geometry and return projected coordinates."""
     if isinstance(loc["geometry"], float):
         return transformer.transform(loc["lon"], loc["lat"])
     p = LineString([transformer.transform(coords["lon"], coords["lat"]) for coords in loc["geometry"]]).centroid
@@ -125,11 +129,13 @@ def transform_geometry(loc, transformer):
 
 
 def process_roles(route, roles, transformer):
+    """Extract projected member coordinates and references for selected roles."""
     filtered = route[route["role"].isin(roles)]
     return filtered.apply(transform_geometry, transformer=transformer, axis=1).tolist(), filtered["ref"].tolist()
 
 
 def side_left_or_right(point, path):
+    """Return whether a point lies on the left or right side of a path."""
     # 1 if left 0 if right для определения с какой стороны от линии точки
     dist = path.project(point)
 
@@ -147,6 +153,7 @@ def side_left_or_right(point, path):
 
 
 def offset_point(point, path_line, direction, distance=7) -> tuple[float, float]:
+    """Offset a point from a path by a fixed distance to one side."""
     # для размещения платформы по одну сторону от пути на расстоянии
     dist = path_line.project(point)
     d1 = dist - 1 if dist - 1 > 0 else 0
@@ -173,6 +180,7 @@ def offset_point(point, path_line, direction, distance=7) -> tuple[float, float]
 
 
 def extract_needed(loc_obj: pd.Series, keys: list[str]) -> dict | None:  # pragma: no cover
+    """Extract selected nested fields and tags from an Overpass element."""
     out = {}
     tags = loc_obj.get("tags", {}) if isinstance(loc_obj.get("tags"), dict) else {}
     for k in keys:
@@ -414,6 +422,7 @@ def overpass_ground_transport2edgenode(
     ref2speed,
     needed_tags,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Convert one ground-transport route relation into edge and node tables."""
 
     nodes_data: list[dict] = []
     edges_data: list[dict] = []
@@ -668,6 +677,7 @@ def overpass_ground_transport2edgenode(
 
 
 def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Convert subway Overpass route and stop-area data into edge and node tables."""
 
     nodes_data: list[dict] = []
     edges_data: list[dict] = []
@@ -919,6 +929,7 @@ def overpass_subway2edgenode(subway_data: pd.DataFrame, local_crs) -> tuple[gpd.
 
 
 def infer_role_from_tags(tags: dict) -> str:
+    """Infer a public-transport member role from OSM tags."""
     _TRUE = {"yes", "true", "1"}
 
     def _is_true(v):
@@ -957,6 +968,7 @@ def infer_role_from_tags(tags: dict) -> str:
 
 
 def patch_members_roles_inplace(stop_areas_df):
+    """Fill missing subway stop-area member roles and geometry in place."""
     missing = []
     for _, r in stop_areas_df.iterrows():
         for m in r.get("members") or []:
@@ -1004,6 +1016,7 @@ def patch_members_roles_inplace(stop_areas_df):
 def parse_overpass_subway_data(
     stop_areas, stop_areas_group, stations_data, to_crs
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Parse detailed subway stop-area data into edge and node tables."""
     graph_nodes = []
     graph_edges = []
 

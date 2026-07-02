@@ -22,6 +22,12 @@ numba_cache_dir = Path(__file__).resolve().parents[1] / ".pytest_cache" / "numba
 numba_cache_dir.mkdir(parents=True, exist_ok=True)
 os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_cache_dir))
 
+# Import numba (which imports numpy internals) before any test module imports geopandas.
+# Under coverage tracing, letting geopandas trigger the first numpy import causes numpy 2.x to
+# fail with "cannot load module more than once per process". Forcing numba's numpy import path
+# to run first — after the NUMBA_* env vars above are set — avoids that double-load crash.
+import numba  # noqa: E402,F401  pylint: disable=wrong-import-position,unused-import
+
 NETWORK_ONLY_TEST_MODULES = {
     "test_downloaders_network.py",
     "test_graph_builders_network.py",

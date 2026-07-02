@@ -54,6 +54,7 @@ _IN_FLIGHT_LOCK = threading.Lock()
 
 
 def cache_save_async(prefix: str, key_src: str, obj) -> None:
+    """Save a cache payload in a background thread unless already queued."""
 
     job_key = (prefix, key_src)
 

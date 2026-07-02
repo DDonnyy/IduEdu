@@ -12,6 +12,23 @@ def build_adjacency_matrix(
     weight: str,
     multigraph_rule: Literal["min", "max"] = "min",
 ) -> sparse.csr_matrix:
+    """Build a weighted adjacency matrix for an ``UrbanGraph``.
+
+    Args:
+        graph: Graph-like object with ``nodes_gdf``, ``edges_gdf`` and graph
+            direction attributes.
+        nodelist: Node ids defining matrix row and column order.
+        weight: Edge column used as matrix values.
+        multigraph_rule: Aggregation rule for parallel edges.
+
+    Returns:
+        SciPy CSR matrix with shape ``(len(nodelist), len(nodelist))``.
+
+    Raises:
+        KeyError: If ``weight`` is not present in ``edges_gdf``.
+        ValueError: If weights contain missing values or ``multigraph_rule`` is
+            unsupported.
+    """
     nodelist = list(nodelist)
 
     if len(nodelist) == 0:
@@ -70,6 +87,16 @@ def build_adjacency_matrix(
 
 
 def build_boolean_adjacency_matrix(graph, *, nodelist: Iterable[Any], weak: bool) -> sparse.csr_matrix:
+    """Build a boolean adjacency matrix for component analysis.
+
+    Args:
+        graph: Graph-like object with edge topology and direction metadata.
+        nodelist: Node ids defining matrix row and column order.
+        weak: If true, ignore edge direction.
+
+    Returns:
+        Boolean SciPy CSR matrix.
+    """
     nodelist = list(nodelist)
     size = len(nodelist)
 
