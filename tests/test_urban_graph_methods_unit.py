@@ -2,6 +2,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import Point, box
 
+from iduedu import nearest_nodes, validate_graph
 from iduedu.graph.urban_graph import UrbanGraph
 from tests.factories import (
     CRS,
@@ -108,6 +109,43 @@ def test_project_objects_inplace_returns_self_and_object_map():
     assert result is graph
     assert object2node.loc[1000] in graph.nodes_gdf.index
     assert len(graph.nodes_gdf) > original_node_count
+
+
+def test_nearest_nodes_method_returns_node_ids_for_geometries():
+    graph = undirected_line_graph()
+    objects = gpd.GeoDataFrame(index=["a", "b"], geometry=[Point(1.0, 0.0), Point(24.0, 0.0)], crs=CRS)
+
+    result = graph.nearest_nodes(objects)
+
+    assert result.index.tolist() == ["a", "b"]
+    assert result.name == "graph_node_id"
+    assert result.tolist() == [0, 2]
+
+
+def test_nearest_nodes_function_uses_custom_series_name():
+    graph = undirected_line_graph()
+    objects = gpd.GeoDataFrame(index=[100], geometry=[Point(29.0, 0.0)], crs=CRS)
+
+    result = nearest_nodes(graph, objects, graph_node_column="nearest")
+
+    assert result.name == "nearest"
+    assert result.loc[100] == 3
+
+
+def test_validate_graph_public_api_reports_broken_edges():
+    graph = undirected_line_graph()
+    graph.edges_gdf.loc[0, "u"] = 999
+
+    with pytest.raises(ValueError, match="missing in nodes_gdf.index"):
+        validate_graph(graph)
+
+
+def test_urban_graph_validate_reports_broken_edges():
+    graph = undirected_line_graph()
+    graph.edges_gdf.loc[0, "v"] = 999
+
+    with pytest.raises(ValueError, match="missing in nodes_gdf.index"):
+        graph.validate()
 
 
 def test_to_csr_does_not_mutate_cached_adjacency_state():

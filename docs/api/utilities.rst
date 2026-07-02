@@ -21,8 +21,12 @@ Graph utilities
     subgraph_by_nodes
     clip_urban_graph
     join_urban_graphs
+    nearest_nodes
     project_objects2urban_graph
     apply_urban_graph_changes
+    read_urban_graph
+    write_urban_graph
+    validate_graph
 
 Optional NetworkX utilities
 ---------------------------

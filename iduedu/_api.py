@@ -12,11 +12,13 @@ from .graph import (
     largest_connected_component,
     largest_strongly_connected_component,
     largest_weakly_connected_component,
+    nearest_nodes,
     number_connected_components,
     number_strongly_connected_components,
     number_weakly_connected_components,
     nx_graph2urban_graph,
     project_objects2urban_graph,
+    read_urban_graph,
     relabel_urban_graph,
     simplify_multiedges,
     strongly_connected_components,
@@ -24,7 +26,9 @@ from .graph import (
     to_directed,
     to_undirected,
     urban_graph2nx_graph,
+    validate_graph,
     weakly_connected_components,
+    write_urban_graph,
 )
 from .graph.shortest_paths import (
     dijkstra_path_length_parallel,

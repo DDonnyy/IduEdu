@@ -119,3 +119,17 @@ def validate_nodes_edges(graph) -> None:
 
     if not missing_nodes.empty:
         raise ValueError(f"Some edge endpoints are missing in nodes_gdf.index: {missing_nodes.tolist()[:10]}")
+
+
+def validate_graph(graph) -> None:
+    """Validate all node, edge, topology and CRS contracts of an ``UrbanGraph``.
+
+    Raises:
+        TypeError: If graph tables use unsupported types.
+        ValueError: If graph table contracts are violated.
+    """
+
+    validate_nodes(graph)
+    validate_edges(graph)
+    sync_graph_crs(graph)
+    validate_nodes_edges(graph)

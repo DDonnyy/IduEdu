@@ -5,6 +5,7 @@
 
 High-level functions <api/high_level>
 Graph data model <api/graph_data_model>
+Migrating to UrbanGraph <migration_to_urban_graph>
 Transport registry <api/transport_registry>
 Graph utilities <api/utilities>
 Matrices <api/matrices>

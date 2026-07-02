@@ -20,6 +20,11 @@ dependencies = [
     "tqdm>=4.68.0,<5.0.0",
 ]
 
+[project.optional-dependencies]
+io = [
+    "pyarrow>=19.0.1,<20.0.0",
+]
+
 [dependency-groups]
 dev = [
     { include-group = "docs" },

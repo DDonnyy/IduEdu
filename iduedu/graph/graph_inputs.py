@@ -6,6 +6,74 @@ import pandas as pd
 from iduedu.graph.urban_graph import UrbanGraph
 
 
+def nearest_nodes(
+    urban_graph: UrbanGraph,
+    gdf: gpd.GeoDataFrame,
+    *,
+    graph_node_column: str = "graph_node_id",
+) -> pd.Series:
+    """Return the nearest graph node id for each input geometry.
+
+    Args:
+        urban_graph: Graph whose ``nodes_gdf`` contains point geometries.
+        gdf: GeoDataFrame with geometries to match to graph nodes.
+        graph_node_column: Name assigned to the returned ``Series``.
+
+    Returns:
+        Series indexed like ``gdf`` with nearest node ids as values.
+
+    Raises:
+        TypeError: If ``gdf`` is not a GeoDataFrame.
+        ValueError: If graph or object geometries cannot be matched safely.
+    """
+
+    if not isinstance(gdf, gpd.GeoDataFrame):
+        raise TypeError(f"gdf must be GeoDataFrame, got {type(gdf).__name__}")
+    if gdf.empty:
+        raise ValueError("gdf must not be empty")
+    if gdf.index.has_duplicates:
+        raise ValueError("gdf.index must be unique")
+    if gdf.crs is None:
+        raise ValueError("gdf must have CRS to calculate nearest graph nodes")
+
+    nodes_gdf = urban_graph.nodes_gdf
+    if not isinstance(nodes_gdf, gpd.GeoDataFrame):
+        raise TypeError("UrbanGraph nodes_gdf must be GeoDataFrame to calculate nearest graph nodes")
+    if nodes_gdf.empty:
+        raise ValueError("graph is empty")
+    if nodes_gdf.index.has_duplicates:
+        raise ValueError("graph.nodes_gdf.index must be unique")
+
+    local_crs = nodes_gdf.crs
+    if local_crs is None:
+        local_crs = getattr(urban_graph.edges_gdf, "crs", None)
+    if local_crs is None:
+        raise ValueError("UrbanGraph does not have CRS on nodes_gdf or edges_gdf")
+
+    points = gdf.copy().to_crs(local_crs)
+    points.geometry = points.geometry.representative_point()
+    position_column = "__source_pos"
+    points_for_join = gpd.GeoDataFrame(
+        {position_column: range(len(points))},
+        geometry=list(points.geometry),
+        crs=local_crs,
+    )
+
+    graph_node_join_column = "__graph_node_id"
+    nodes_for_join = nodes_gdf[["geometry"]].copy()
+    nodes_for_join.index.name = graph_node_join_column
+    nearest_join = points_for_join.sjoin_nearest(nodes_for_join, how="left")
+    nearest_by_pos = (
+        nearest_join.drop_duplicates(position_column)
+        .sort_values(position_column)[graph_node_join_column]
+        .reset_index(drop=True)
+    )
+    if nearest_by_pos.isna().any():
+        raise ValueError("Could not find nearest graph node for some input geometries")
+
+    return pd.Series(nearest_by_pos.to_numpy(), index=gdf.index, name=graph_node_column)
+
+
 def resolve_graph_nodes_input(
     *,
     urban_graph: UrbanGraph,
@@ -15,14 +83,12 @@ def resolve_graph_nodes_input(
     nodes_name: str,
     gdf_name: str,
 ) -> pd.Series:
-    """
-    Нормализует вход ``nodes`` / ``gdf`` в ``Series`` с узлами графа.
+    """Normalize ``nodes`` or ``gdf`` inputs into graph node ids.
 
-    Если передан ``gdf`` с колонкой ``graph_node_column``, узлы берутся из нее.
-    Если колонки нет, ``gdf`` должен быть ``GeoDataFrame``: тогда узлы
-    находятся по ближайшей геометрии к ``graph.nodes_gdf``. Если переданы
-    готовые ``nodes``, они только валидируются. Индекс результата - индекс
-    объектов или сами ids узлов.
+    If ``gdf`` already contains ``graph_node_column``, values are read from
+    that column. Otherwise ``gdf`` must be a GeoDataFrame and each geometry is
+    matched to the nearest graph node. Plain ``nodes`` input is validated and
+    returned as a Series indexed by node ids.
     """
 
     if nodes is not None and gdf is not None:
@@ -53,36 +119,7 @@ def resolve_graph_nodes_input(
         else:
             if not isinstance(gdf, gpd.GeoDataFrame):
                 raise KeyError(f"{gdf_name} has no node column {graph_node_column!r} and no geometry")
-
-            local_crs = urban_graph.nodes_gdf.crs
-            if local_crs is None:
-                local_crs = urban_graph.edges_gdf.crs
-            if local_crs is None:
-                raise ValueError("UrbanGraph does not have CRS on nodes_gdf or edges_gdf")
-            if gdf.crs is None:
-                raise ValueError(f"{gdf_name} must have CRS to calculate nearest graph nodes")
-
-            points = gdf.copy().to_crs(local_crs)
-            points.geometry = points.geometry.representative_point()
-            position_column = "__source_pos"
-            points_for_join = gpd.GeoDataFrame(
-                {position_column: range(len(points))},
-                geometry=list(points.geometry),
-                crs=local_crs,
-            )
-            graph_node_join_column = "__graph_node_id"
-            nodes_for_join = urban_graph.nodes_gdf[["geometry"]].copy()
-            nodes_for_join.index.name = graph_node_join_column
-            nearest_join = points_for_join.sjoin_nearest(nodes_for_join, how="left")
-            nearest_by_pos = (
-                nearest_join.drop_duplicates(position_column)
-                .sort_values(position_column)[graph_node_join_column]
-                .reset_index(drop=True)
-            )
-            if nearest_by_pos.isna().any():
-                raise ValueError(f"Could not find nearest graph node for some {gdf_name} geometries")
-
-            result = pd.Series(nearest_by_pos.to_numpy(), index=gdf.index, name=graph_node_column)
+            result = nearest_nodes(urban_graph, gdf, graph_node_column=graph_node_column)
     else:
         resolved_nodes = list(nodes)
         if not resolved_nodes:

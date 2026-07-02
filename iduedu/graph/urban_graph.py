@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Iterable, Literal
 
 import geopandas as gpd
@@ -6,13 +7,7 @@ import pandas as pd
 from scipy import sparse
 
 from iduedu.graph.adjacency import build_adjacency_matrix
-from iduedu.graph.validation import (
-    gdf_crs,
-    sync_graph_crs,
-    validate_edges,
-    validate_nodes,
-    validate_nodes_edges,
-)
+from iduedu.graph.validation import gdf_crs, sync_graph_crs, validate_graph
 
 
 class UrbanGraph:
@@ -86,7 +81,7 @@ class UrbanGraph:
         self.node_to_adjacency_pos = {}
         self.adjacency_weight = adjacency_weight
 
-        self._validate()
+        self.validate()
 
     def __repr__(self) -> str:
         return (
@@ -134,20 +129,15 @@ class UrbanGraph:
     def _sync_crs(self) -> None:
         sync_graph_crs(self)
 
-    def _validate_nodes(self) -> None:
-        validate_nodes(self)
+    def validate(self) -> None:
+        """Validate node, edge, topology and CRS contracts of the graph.
 
-    def _validate_edges(self) -> None:
-        validate_edges(self)
+        Raises:
+            TypeError: If graph tables use unsupported types.
+            ValueError: If graph table contracts are violated.
+        """
 
-    def _validate_nodes_edges(self) -> None:
-        validate_nodes_edges(self)
-
-    def _validate(self) -> None:
-        self._validate_nodes()
-        self._validate_edges()
-        self._sync_crs()
-        self._validate_nodes_edges()
+        validate_graph(self)
 
     def copy(self) -> "UrbanGraph":
         """Return an independent copy of the graph and cached adjacency state."""
@@ -170,6 +160,37 @@ class UrbanGraph:
 
         return graph
 
+    def write(self, path: str | Path, *, include_adjacency: bool = False) -> Path:
+        """Write the graph to an ``.urbangraph`` archive.
+
+        Args:
+            path: Destination path with the ``.urbangraph`` suffix.
+            include_adjacency: Whether to persist the cached adjacency matrix.
+
+        Returns:
+            Path to the written archive.
+        """
+
+        from iduedu.graph.io import write_urban_graph
+
+        return write_urban_graph(self, path, include_adjacency=include_adjacency)
+
+    @classmethod
+    def read(cls, path: str | Path, *, validate: bool = True) -> "UrbanGraph":
+        """Read an ``UrbanGraph`` from an ``.urbangraph`` archive.
+
+        Args:
+            path: Source path with the ``.urbangraph`` suffix.
+            validate: Whether to validate the graph after reading.
+
+        Returns:
+            Restored graph instance.
+        """
+
+        from iduedu.graph.io import read_urban_graph
+
+        return read_urban_graph(path, validate=validate)
+
     def _replace_state_from(self, other: "UrbanGraph") -> None:
         if not isinstance(other, UrbanGraph):
             raise TypeError(f"other must be UrbanGraph, got {type(other).__name__}")
@@ -180,7 +201,7 @@ class UrbanGraph:
         self.edge_direction_column = other.edge_direction_column
         self.crs = other.crs
         self.type = other.type
-        self._validate()
+        self.validate()
         self._sync_crs()
         self.adjacency_matrix = None
         self.adjacency_nodelist = []
@@ -696,6 +717,28 @@ class UrbanGraph:
 
         self._replace_state_from(undirected)
         return self
+
+    def nearest_nodes(
+        self,
+        objects_gdf: gpd.GeoDataFrame,
+        *,
+        graph_node_column: str = "graph_node_id",
+    ) -> pd.Series:
+        """Return nearest graph node ids for object geometries.
+
+        Functional equivalent: :func:`iduedu.graph.graph_inputs.nearest_nodes`.
+
+        Args:
+            objects_gdf: GeoDataFrame with geometries to match to graph nodes.
+            graph_node_column: Name assigned to the returned ``Series``.
+
+        Returns:
+            Series indexed like ``objects_gdf`` with nearest node ids as values.
+        """
+
+        from iduedu.graph.graph_inputs import nearest_nodes
+
+        return nearest_nodes(self, objects_gdf, graph_node_column=graph_node_column)
 
     def project_objects(
         self,

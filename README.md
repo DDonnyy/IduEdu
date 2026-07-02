@@ -21,6 +21,8 @@ intermodal networks, and stores them as `UrbanGraph` objects backed by GeoDataFr
 ## Documentation
 
 Full documentation is published at <https://iduclub.github.io/IduEdu/>.
+Migrating from the old NetworkX-first API? See the
+[UrbanGraph migration guide](docs/migration_to_urban_graph.md).
 
 ## Features
 
@@ -29,6 +31,8 @@ Full documentation is published at <https://iduclub.github.io/IduEdu/>.
 - Compute shortest paths and OD matrices with Numba-backed sparse graph routines.
 - Work with connected, weakly connected and strongly connected UrbanGraph components.
 - Convert to and from NetworkX through optional compatibility utilities.
+- Snap geometries to graph nodes with `nearest_nodes` and validate custom graph edits.
+- Store graphs as `.urbangraph` archives with parquet tables and metadata.
 - Cache Overpass responses and query historical OSM snapshots.
 
 ## Installation
@@ -40,6 +44,8 @@ pip install iduedu
 IduEdu requires Python 3.11 or 3.12. The core package uses the standard geospatial stack
 including GeoPandas, Shapely, PyProj, NumPy, Pandas and SciPy. NetworkX utilities are optional
 compatibility helpers.
+
+Use `pip install "iduedu[io]"` to enable `.urbangraph` parquet archive read/write helpers.
 
 ## Quickstart
 
@@ -98,6 +104,9 @@ Common entry points are available directly from `iduedu`:
 - Graph model: `UrbanGraph`, `UrbanGraphChanges`.
 - Editing and transforms: `clip_urban_graph`, `join_urban_graphs`, `project_objects2urban_graph`,
   `relabel_urban_graph`, `simplify_multiedges`, `to_directed`, `to_undirected`.
+- Graph utilities: `nearest_nodes`, `validate_graph`, `UrbanGraph.nearest_nodes`,
+  `UrbanGraph.validate`.
+- Graph IO: `read_urban_graph`, `write_urban_graph`, `UrbanGraph.read`, `UrbanGraph.write`.
 - Components: `connected_components`, `weakly_connected_components`, `strongly_connected_components`,
   `largest_component`.
 - Shortest paths and matrices: `single_source_dijkstra_path_length`, `multi_source_dijkstra_path_length`,

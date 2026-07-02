@@ -34,6 +34,7 @@ coverage.xml
 # Sphinx docs
 docs/_build/
 docs/_autoapi/
+docs/api/generated/
 docs/_autosummary/
 docs/_doctrees/
 _build/
@@ -48,5 +49,5 @@ _autosummary/
 .DS_Store
 Thumbs.db
 
-# Claude Code
-CLAUDE.md
+# Agents Code
+AGENTS.md

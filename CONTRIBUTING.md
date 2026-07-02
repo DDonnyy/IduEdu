@@ -8,7 +8,7 @@ Never bump the version or create a tag by hand.
 ## Requirements
 
 - Python 3.11 or 3.12
-- [uv](https://docs.astral.sh/uv/) (package manager; the lockfile is `uv.lock`)
+- [uv](https://docs.astral.sh/uv/) (package manager; `uv.lock` is generated locally and is not committed)
 - `make` (optional but every command below has a `make` shortcut)
 
 ## Setup
@@ -33,7 +33,6 @@ uv sync --all-groups     # or: make install-dev
 | Build docs | `make docs` | Sphinx → `docs/_build/html` |
 
 Line length is 120. Imports are isort-sorted (`__init__.py` files are skipped).
-See [CLAUDE.md](CLAUDE.md) for architecture and deeper testing notes.
 
 ## Commit messages (Conventional Commits)
 
