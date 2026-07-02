@@ -196,17 +196,13 @@ class TransportRegistry:
         return list(self._specs.keys())
 
 
-DEFAULT_REGISTRY = TransportRegistry(
-    {
-        "bus": TransportSpec("bus", vmax_tech_kmh=90, accel_dist_m=700, brake_dist_m=650, traffic_coef=0.7),
-        "trolleybus": TransportSpec(
-            "trolleybus", vmax_tech_kmh=70, accel_dist_m=750, brake_dist_m=700, traffic_coef=0.7
-        ),
-        "tram": TransportSpec("tram", vmax_tech_kmh=75, accel_dist_m=500, brake_dist_m=450, traffic_coef=0.8),
-        "subway": TransportSpec("subway", vmax_tech_kmh=80, accel_dist_m=450, brake_dist_m=450, traffic_coef=0.9),
-        "train": TransportSpec("train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97),
-    }
-)
+_DEFAULT_TRANSPORT_SPECS = {
+    "bus": TransportSpec("bus", vmax_tech_kmh=90, accel_dist_m=700, brake_dist_m=650, traffic_coef=0.7),
+    "trolleybus": TransportSpec("trolleybus", vmax_tech_kmh=70, accel_dist_m=750, brake_dist_m=700, traffic_coef=0.7),
+    "tram": TransportSpec("tram", vmax_tech_kmh=75, accel_dist_m=500, brake_dist_m=450, traffic_coef=0.8),
+    "subway": TransportSpec("subway", vmax_tech_kmh=80, accel_dist_m=450, brake_dist_m=450, traffic_coef=0.9),
+}
+_TRAIN_SPEC = TransportSpec("train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97)
 
-# TODO
-DEFAULT_REGISTRY_W_TRAIN = DEFAULT_REGISTRY
+DEFAULT_REGISTRY = TransportRegistry(_DEFAULT_TRANSPORT_SPECS)
+DEFAULT_REGISTRY_W_TRAIN = TransportRegistry({**_DEFAULT_TRANSPORT_SPECS, "train": _TRAIN_SPEC})

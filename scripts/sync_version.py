@@ -8,7 +8,7 @@ def main() -> None:
 
     with pyproject_path.open("rb") as f:
         data = tomllib.load(f)
-    version = data["tool"]["poetry"]["version"]
+    version = data["project"]["version"]
 
     text = version_file_path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -23,7 +23,7 @@ def main() -> None:
             new_lines.append(line)
 
     if not replaced:
-        raise SystemExit(f"VERSION line not found in {version_file_path}. " "Expected a line starting with `VERSION`.")
+        raise SystemExit(f"VERSION line not found in {version_file_path}. Expected a line starting with `VERSION`.")
 
     end_newline = "\n" if text.endswith("\n") else ""
     version_file_path.write_text("\n".join(new_lines) + end_newline, encoding="utf-8")

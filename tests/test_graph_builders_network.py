@@ -14,6 +14,8 @@ from iduedu.overpass.downloaders import RequestError
 
 config.configure_logging("DEBUG")
 
+pytestmark = [pytest.mark.network, pytest.mark.slow]
+
 
 @pytest.fixture(scope="module")
 def walk_graph(bounds):

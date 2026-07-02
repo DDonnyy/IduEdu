@@ -115,3 +115,12 @@ exclude_lines = [
     "pragma: no cover",
     "pragma: no branch",
 ]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast tests that do not touch network or external services",
+    "integration: tests that exercise several package layers together",
+    "network: tests that may call Overpass or depend on cached downloaded data",
+    "slow: tests that are slow enough to be excluded from tight feedback loops",
+    "numba: tests that execute numba kernels",
+]

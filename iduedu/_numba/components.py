@@ -1,14 +1,27 @@
 import numba as nb
 import numpy as np
 
-from iduedu._numba.csr import BCSRMatrix
+from iduedu._numba.csr import BCSRMatrix, bcsr_type
 
 
-@nb.njit(
-    nb.types.Array(nb.int32, 1, "C")(BCSRMatrix.class_type.instance_type),
-    cache=True,
-)
-def connected_components_numba(adj_matrix: BCSRMatrix):  # pragma: no cover
+def _njit(signature=None, **kwargs):
+    if signature is None:
+        return nb.njit(**kwargs)
+    return nb.njit(signature, **kwargs)
+
+
+_connected_components_signature = None
+_strongly_connected_components_signature = None
+if bcsr_type is not None:
+    _connected_components_signature = nb.types.Array(nb.int32, 1, "C")(bcsr_type)
+    _strongly_connected_components_signature = nb.types.Array(nb.int32, 1, "C")(
+        bcsr_type,
+        bcsr_type,
+    )
+
+
+@_njit(_connected_components_signature, cache=True)
+def connected_components_numba(adj_matrix: BCSRMatrix):
     labels = np.full(adj_matrix.tot_rows, -1, dtype=np.int32)
     stack = np.empty(adj_matrix.tot_rows, dtype=np.int32)
     component_id = np.int32(0)
@@ -38,14 +51,8 @@ def connected_components_numba(adj_matrix: BCSRMatrix):  # pragma: no cover
     return labels
 
 
-@nb.njit(
-    nb.types.Array(nb.int32, 1, "C")(
-        BCSRMatrix.class_type.instance_type,
-        BCSRMatrix.class_type.instance_type,
-    ),
-    cache=True,
-)
-def strongly_connected_components_numba(adj_matrix: BCSRMatrix, reverse_adj_matrix: BCSRMatrix):  # pragma: no cover
+@_njit(_strongly_connected_components_signature, cache=True)
+def strongly_connected_components_numba(adj_matrix: BCSRMatrix, reverse_adj_matrix: BCSRMatrix):
     visited = np.zeros(adj_matrix.tot_rows, dtype=np.bool_)
     order = np.empty(adj_matrix.tot_rows, dtype=np.int32)
     order_size = 0

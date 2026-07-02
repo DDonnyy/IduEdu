@@ -10,11 +10,13 @@ from iduedu import (
     clip_nx_graph,
     gdf2graph,
     graph2gdf,
-    keep_largest_connected_component,
+    keep_largest_nx_component,
     read_gml,
     reproject_graph,
     write_gml,
 )
+
+pytestmark = pytest.mark.unit
 
 
 @pytest.fixture()
@@ -39,13 +41,34 @@ def simple_graph_4326() -> nx.Graph:
     return G
 
 
-def test_keep_largest_scc():
+def test_keep_largest_nx_component_directed_uses_weak_components():
     G = nx.DiGraph()
     G.add_edges_from([(1, 2), (2, 3), (3, 1)])
     G.add_edges_from([(10, 11), (11, 10)])
-    pruned = keep_largest_connected_component(G)
+
+    pruned = keep_largest_nx_component(G)
+
     assert set(pruned.nodes()) == {1, 2, 3}
     assert pruned.is_directed()
+
+
+def test_keep_largest_nx_component_undirected_keeps_largest_component():
+    G = nx.Graph()
+    G.add_edges_from([(1, 2), (2, 3), (10, 11)])
+
+    pruned = keep_largest_nx_component(G)
+
+    assert set(pruned.nodes()) == {1, 2, 3}
+    assert not pruned.is_directed()
+
+
+def test_keep_largest_nx_component_empty_graph_returns_empty_copy():
+    G = nx.Graph()
+
+    pruned = keep_largest_nx_component(G)
+
+    assert pruned is not G
+    assert pruned.number_of_nodes() == 0
 
 
 def test_graph_to_gdf_nodes_only(simple_graph_3857):
@@ -61,6 +84,15 @@ def test_graph_to_gdf_edges_only_restore(simple_graph_3857):
     edges = graph2gdf(G, edges=True, nodes=False, restore_edge_geom=True)
     assert isinstance(edges, gpd.GeoDataFrame)
     assert (~edges["geometry"].is_empty).all()
+
+
+def test_graph_to_gdf_nodes_and_edges_combined(simple_graph_3857):
+    G = simple_graph_3857
+    graph_gdf = graph2gdf(G, edges=True, nodes=True, restore_edge_geom=True)
+
+    assert isinstance(graph_gdf, gpd.GeoDataFrame)
+    assert len(graph_gdf) == G.number_of_nodes() + G.number_of_edges()
+    assert graph_gdf.crs == G.graph["crs"]
 
 
 def test_graph_to_gdf_no_crs_raises(simple_graph_3857):
@@ -117,9 +149,3 @@ def test_clip_nx_graph(simple_graph_3857):
     assert set(clipped.nodes()) == {1, 2}
     assert clipped.has_edge(1, 2)
     assert not clipped.has_edge(2, 3)
-
-
-def test_graph_to_gdf_restore_geom_integration(intermodal_graph):
-    graph_gdf = graph2gdf(intermodal_graph, restore_edge_geom=True)
-    assert graph_gdf is not None
-    assert not graph_gdf.empty

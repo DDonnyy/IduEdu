@@ -1,5 +1,5 @@
 # pylint: disable=unused-import
-from .constants.transport_specs import DEFAULT_REGISTRY, TransportRegistry, TransportSpec
+from .constants.transport_specs import DEFAULT_REGISTRY, DEFAULT_REGISTRY_W_TRAIN, TransportRegistry, TransportSpec
 from .graph import (
     UrbanGraph,
     UrbanGraphChanges,

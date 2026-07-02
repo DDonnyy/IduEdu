@@ -5,6 +5,8 @@ from loguru import logger
 
 from iduedu.config import Config
 
+pytestmark = pytest.mark.unit
+
 # ---------- fixtures ----------
 
 

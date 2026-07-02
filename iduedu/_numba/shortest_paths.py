@@ -4,7 +4,7 @@ import numba as nb
 import numpy as np
 from numba.typed import List
 
-from iduedu._numba import UI32CSRMatrix
+from iduedu._numba import UI32CSRMatrix, ui32csr_type
 
 coo_pair_type = nb.types.UniTuple(nb.int32, 2)
 coo_triplet_type = nb.types.UniTuple(nb.int32, 3)
@@ -14,18 +14,63 @@ coo_rows_type = nb.types.ListType(coo_row_type)
 dijkstra_owner_heap_item_type = nb.types.UniTuple(nb.int32, 3)
 
 
-@nb.njit(
-    nb.types.Array(nb.int32, 1, "C")(
-        UI32CSRMatrix.class_type.instance_type,
+def _njit(signature=None, **kwargs):
+    if signature is None:
+        return nb.njit(**kwargs)
+    return nb.njit(signature, **kwargs)
+
+
+_dijkstra_from_fringe_signature = None
+_dijkstra_distances_signature = None
+_single_source_signature = None
+_multi_source_signature = None
+_nearest_source_signature = None
+_od_parallel_signature = None
+_path_parallel_signature = None
+if ui32csr_type is not None:
+    _dijkstra_from_fringe_signature = nb.types.Array(nb.int32, 1, "C")(
+        ui32csr_type,
         nb.types.Array(nb.int32, 1, "C"),
         coo_row_type,
         nb.int32,
-    ),
-    cache=True,
-)
+    )
+    _dijkstra_distances_signature = nb.types.Array(nb.int32, 1, "C")(
+        ui32csr_type,
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.int32,
+    )
+    _single_source_signature = coo_row_type(
+        ui32csr_type,
+        nb.int32,
+        nb.int32,
+    )
+    _multi_source_signature = coo_row_type(
+        ui32csr_type,
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.int32,
+    )
+    _nearest_source_signature = coo_triplet_row_type(
+        ui32csr_type,
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.int32,
+    )
+    _od_parallel_signature = coo_rows_type(
+        ui32csr_type,
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.int32,
+    )
+    _path_parallel_signature = coo_rows_type(
+        ui32csr_type,
+        nb.types.Array(nb.int32, 1, "C"),
+        nb.int32,
+    )
+
+
+@_njit(_dijkstra_from_fringe_signature, cache=True)
 def _dijkstra_numba_distances_from_fringe(
     numba_adj_matrix: UI32CSRMatrix, seen: np.ndarray, fringe: list, cutoff: np.int32
-):  # pragma: no cover
+):
     distances = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
 
     while len(fringe) > 0:
@@ -48,17 +93,8 @@ def _dijkstra_numba_distances_from_fringe(
     return distances
 
 
-@nb.njit(
-    nb.types.Array(nb.int32, 1, "C")(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.int32,
-    ),
-    cache=True,
-)
-def _dijkstra_numba_distances(
-    numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32
-):  # pragma: no cover
+@_njit(_dijkstra_distances_signature, cache=True)
+def _dijkstra_numba_distances(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32):
     seen = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     fringe = List.empty_list(coo_pair_type)
 
@@ -70,17 +106,8 @@ def _dijkstra_numba_distances(
     return _dijkstra_numba_distances_from_fringe(numba_adj_matrix, seen, fringe, cutoff)
 
 
-@nb.njit(
-    coo_row_type(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.int32,
-        nb.int32,
-    ),
-    cache=True,
-)
-def single_source_dijkstra_numba_path_length(
-    numba_adj_matrix: UI32CSRMatrix, origin: np.int32, cutoff: np.int32
-):  # pragma: no cover
+@_njit(_single_source_signature, cache=True)
+def single_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, origin: np.int32, cutoff: np.int32):
     seen = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     fringe = List.empty_list(coo_pair_type)
     seen[origin] = np.int32(0)
@@ -95,17 +122,8 @@ def single_source_dijkstra_numba_path_length(
     return row
 
 
-@nb.njit(
-    coo_row_type(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.int32,
-    ),
-    cache=True,
-)
-def multi_source_dijkstra_numba_path_length(
-    numba_adj_matrix: UI32CSRMatrix, sources: np.ndarray, cutoff: np.int32
-):  # pragma: no cover
+@_njit(_multi_source_signature, cache=True)
+def multi_source_dijkstra_numba_path_length(numba_adj_matrix: UI32CSRMatrix, sources: np.ndarray, cutoff: np.int32):
     distances = _dijkstra_numba_distances(numba_adj_matrix, sources, cutoff)
 
     row = List.empty_list(coo_pair_type)
@@ -116,17 +134,8 @@ def multi_source_dijkstra_numba_path_length(
     return row
 
 
-@nb.njit(
-    coo_triplet_row_type(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.int32,
-    ),
-    cache=True,
-)
-def multi_source_dijkstra_numba_nearest_source(
-    numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32
-):  # pragma: no cover
+@_njit(_nearest_source_signature, cache=True)
+def multi_source_dijkstra_numba_nearest_source(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32):
     distances = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     seen = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
     seen_source = np.full(numba_adj_matrix.tot_rows, -1, dtype=np.int32)
@@ -163,19 +172,10 @@ def multi_source_dijkstra_numba_nearest_source(
     return row
 
 
-@nb.njit(
-    coo_rows_type(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.int32,
-    ),
-    cache=True,
-    parallel=True,
-)
+@_njit(_od_parallel_signature, cache=True, parallel=True)
 def dijkstra_numba_od_parallel(
     numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, destinations: np.ndarray, cutoff: np.int32
-):  # pragma: no cover
+):
     result = List.empty_list(coo_row_type)
     for _ in range(len(origins)):
         result.append(List.empty_list(coo_pair_type))
@@ -195,18 +195,8 @@ def dijkstra_numba_od_parallel(
     return result
 
 
-@nb.njit(
-    coo_rows_type(
-        UI32CSRMatrix.class_type.instance_type,
-        nb.types.Array(nb.int32, 1, "C"),
-        nb.int32,
-    ),
-    cache=True,
-    parallel=True,
-)
-def dijkstra_numba_path_length_parallel(
-    numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32
-):  # pragma: no cover
+@_njit(_path_parallel_signature, cache=True, parallel=True)
+def dijkstra_numba_path_length_parallel(numba_adj_matrix: UI32CSRMatrix, origins: np.ndarray, cutoff: np.int32):
     result = List.empty_list(coo_row_type)
     for _ in range(len(origins)):
         result.append(List.empty_list(coo_pair_type))

@@ -1,14 +1,15 @@
-# tests/test_transport_specs.py
-
 import math
 
 import pytest
 
 from iduedu.constants.transport_specs import (
     DEFAULT_REGISTRY,
+    DEFAULT_REGISTRY_W_TRAIN,
     TransportRegistry,
     TransportSpec,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def approx(a: float, b: float, rel: float = 1e-9, abs_: float = 1e-9) -> bool:
@@ -205,9 +206,23 @@ def test_registry_list_types_contains_added():
 
 def test_default_registry_has_expected_keys():
     types = set(DEFAULT_REGISTRY.list_types())
+    assert {"bus", "tram", "trolleybus", "subway"} <= types
+    assert "train" not in types
+
+
+def test_default_registry_with_train_has_expected_keys():
+    types = set(DEFAULT_REGISTRY_W_TRAIN.list_types())
     assert {"bus", "tram", "trolleybus", "subway", "train"} <= types
 
 
 def test_default_registry_specs_are_valid():
     for t in DEFAULT_REGISTRY.list_types():
         DEFAULT_REGISTRY.get(t).validate()
+    for t in DEFAULT_REGISTRY_W_TRAIN.list_types():
+        DEFAULT_REGISTRY_W_TRAIN.get(t).validate()
+
+
+def test_default_registries_are_independent():
+    assert DEFAULT_REGISTRY_W_TRAIN is not DEFAULT_REGISTRY
+    assert DEFAULT_REGISTRY.try_get("train") is None
+    assert DEFAULT_REGISTRY_W_TRAIN.try_get("train") is not None

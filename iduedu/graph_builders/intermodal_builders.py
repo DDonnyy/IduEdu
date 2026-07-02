@@ -103,22 +103,24 @@ def join_pt_walk_graph(
                     is_sequence = node_attrs[column].map(lambda value: isinstance(value, (list, tuple, set)))
                     node_attrs.loc[is_sequence, column] = node_attrs.loc[is_sequence, column].map(list)
 
-                attrs_long = node_attrs.reset_index(drop=True).explode(attr_columns)
-                attrs_long = attrs_long.dropna(subset=attr_columns, how="all")
+                def collapse_values(values):
+                    unique_values = list(dict.fromkeys(values.dropna()))
+                    if len(unique_values) == 1:
+                        return unique_values[0]
+                    return unique_values
 
-                if not attrs_long.empty:
+                attrs = pd.DataFrame(index=pd.Index(node_attrs["target_node"].drop_duplicates(), name="target_node"))
+                for column in attr_columns:
+                    attr_long = node_attrs[["target_node", column]].explode(column)
+                    attr_long = attr_long.dropna(subset=[column])
+                    if attr_long.empty:
+                        continue
+                    attrs[column] = attr_long.groupby("target_node", sort=False)[column].agg(collapse_values)
 
-                    def collapse_values(values):
-                        unique_values = list(dict.fromkeys(values.dropna()))
-                        if len(unique_values) == 1:
-                            return unique_values[0]
-                        return unique_values
-
-                    attrs = attrs_long.groupby("target_node", sort=False)[attr_columns].agg(collapse_values)
-                    for column in attrs.columns:
-                        if column not in walk_nodes.columns:
-                            walk_nodes[column] = pd.NA
-                        walk_nodes.loc[attrs.index, column] = attrs[column]
+                for column in attrs.columns:
+                    if column not in walk_nodes.columns:
+                        walk_nodes[column] = pd.NA
+                    walk_nodes.loc[attrs.index, column] = attrs[column]
 
             projected_walk = UrbanGraph(
                 nodes_gdf=walk_nodes,
@@ -215,7 +217,8 @@ def get_intermodal_graph(
         max_dist (float): Max distance in meters to connect PT platforms to walk edges.
         keep_largest_subgraph (bool): If True, keep only the largest strongly connected component after joining.
         walk_kwargs (dict[str, Any] | None): Extra keyword args for `get_walk_graph` (e.g., `walk_speed`,
-            `simplify`, `osm_edge_tags`, `keep_largest_subgraph`, …). Defaults are sensible.
+            `simplify`, `osm_edge_tags`, `keep_largest_subgraph`, …). Walk graph keep_largest_subgraph defaults to
+            False unless explicitly set here.
         pt_kwargs (dict[str, Any] | None): Extra keyword args for `get_all_public_transport_graph`
             (e.g., `transport_types`, `osm_edge_tags`, `keep_edge_geometry`, …).
 
@@ -244,7 +247,7 @@ def get_intermodal_graph(
             kwargs.setdefault("osm_edge_tags", osm_edge_tags)
         kwargs.setdefault("clip_by_territory", clip_by_territory)
 
-    walk_kwargs.setdefault("keep_largest_subgraph", keep_largest_subgraph)
+    walk_kwargs.setdefault("keep_largest_subgraph", False)
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         walk_future = executor.submit(get_walk_graph, territory=boundary, **walk_kwargs)
