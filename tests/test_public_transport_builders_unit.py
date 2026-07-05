@@ -62,10 +62,66 @@ def test_graph_data_to_urban_graph_builds_boarding_and_travel_edges():
     boarding = graph.edges_gdf[graph.edges_gdf["type"] == "boarding"].iloc[0]
     assert boarding["length_meter"] == 0.0
     assert boarding["time_min"] == 2.5  # avg_boarding_time_min
+    assert bool(boarding["oneway"]) is True
+
+    alighting = graph.edges_gdf[graph.edges_gdf["type"] == "alighting"].iloc[0]
+    assert alighting["length_meter"] == 0.0
+    assert alighting["time_min"] == 0.0
+    assert bool(alighting["oneway"]) is True
+    assert boarding["u"] == alighting["v"]
+    assert boarding["v"] == alighting["u"]
 
     travel = graph.edges_gdf[graph.edges_gdf["type"] == "bus"].iloc[0]
     assert travel["length_meter"] == pytest.approx(300.0, abs=1e-3)
     assert travel["time_min"] > 0
+
+
+def test_graph_data_to_urban_graph_keeps_shared_osm_nodes_route_specific():
+    nodes = _nodes(
+        {
+            "node_id": ["shared", "a_next", "shared", "b_next"],
+            "type": ["bus", "bus", "bus", "bus"],
+            "route": ["A", "A", "B", "B"],
+        },
+        [Point(0, 0), Point(0, 300), Point(0, 0), Point(300, 0)],
+    )
+    edges = gpd.GeoDataFrame(
+        {
+            "u": ["shared", "shared"],
+            "v": ["a_next", "b_next"],
+            "type": ["bus", "bus"],
+            "route": ["A", "B"],
+            "oneway": [True, True],
+        },
+        geometry=[LineString([(0, 0), (0, 300)]), LineString([(0, 0), (300, 0)])],
+        crs=CRS,
+    )
+    graph = _graph_data_to_urban_graph(nodes, edges, DEFAULT_REGISTRY, CRS, 1.0)
+
+    route_a_edge = graph.edges_gdf.loc[graph.edges_gdf["route"] == "A"].iloc[0]
+    route_b_edge = graph.edges_gdf.loc[graph.edges_gdf["route"] == "B"].iloc[0]
+    assert route_a_edge["u"] != route_b_edge["u"]
+    assert graph.nodes_gdf.loc[route_a_edge["u"], "route"] == "A"
+    assert graph.nodes_gdf.loc[route_b_edge["u"], "route"] == "B"
+
+
+def test_graph_data_to_urban_graph_keeps_duplicate_route_lookup_endpoints():
+    nodes = _nodes(
+        {
+            "node_id": ["a", "a", "b"],
+            "type": ["bus", "bus", "bus"],
+            "route": ["A", "A", "A"],
+        },
+        [Point(0, 0), Point(0, 10), Point(0, 300)],
+    )
+    edges = gpd.GeoDataFrame(
+        {"u": ["a"], "v": ["b"], "type": ["bus"], "route": ["A"], "oneway": [True]},
+        geometry=[LineString([(0, 0), (0, 300)])],
+        crs=CRS,
+    )
+    graph = _graph_data_to_urban_graph(nodes, edges, DEFAULT_REGISTRY, CRS, 1.0)
+
+    assert len(graph.edges_gdf) == 1
 
 
 def test_graph_data_to_urban_graph_fills_missing_oneway():

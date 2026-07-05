@@ -1,6 +1,7 @@
 from typing import Any, Iterable
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
 from iduedu.graph.urban_graph import UrbanGraph
@@ -50,28 +51,19 @@ def nearest_nodes(
     if local_crs is None:
         raise ValueError("UrbanGraph does not have CRS on nodes_gdf or edges_gdf")
 
-    points = gdf.copy().to_crs(local_crs)
-    points.geometry = points.geometry.representative_point()
-    position_column = "__source_pos"
-    points_for_join = gpd.GeoDataFrame(
-        {position_column: range(len(points))},
-        geometry=list(points.geometry),
-        crs=local_crs,
-    )
+    points_geom = gdf.geometry
+    if points_geom.crs != local_crs:
+        points_geom = points_geom.to_crs(local_crs)
+    points_geom = points_geom.representative_point()
 
-    graph_node_join_column = "__graph_node_id"
-    nodes_for_join = nodes_gdf[["geometry"]].copy()
-    nodes_for_join.index.name = graph_node_join_column
-    nearest_join = points_for_join.sjoin_nearest(nodes_for_join, how="left")
-    nearest_by_pos = (
-        nearest_join.drop_duplicates(position_column)
-        .sort_values(position_column)[graph_node_join_column]
-        .reset_index(drop=True)
-    )
-    if nearest_by_pos.isna().any():
+    matches = nodes_gdf.sindex.nearest(points_geom.values, return_all=False)
+    order = np.argsort(matches[0], kind="stable")
+    nearest_positions = matches[1][order]
+    if len(nearest_positions) != len(gdf):
         raise ValueError("Could not find nearest graph node for some input geometries")
 
-    return pd.Series(nearest_by_pos.to_numpy(), index=gdf.index, name=graph_node_column)
+    node_ids = nodes_gdf.index.to_numpy()[nearest_positions]
+    return pd.Series(node_ids, index=gdf.index, name=graph_node_column)
 
 
 def resolve_graph_nodes_input(

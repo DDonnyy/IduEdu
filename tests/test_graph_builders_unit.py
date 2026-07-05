@@ -350,6 +350,38 @@ def test_get_public_transport_graph_accepts_train_with_custom_registry(monkeypat
     assert graph.edges_gdf.empty
 
 
+def test_get_public_transport_graph_drops_unrequested_leaked_route_type(monkeypatch):
+    # The subway station-context query can pull in unrelated route relations (e.g.
+    # route=train sharing nodes with a metro station). Such leaked types must not
+    # reach the parser / travel-time registry when they were not requested.
+    parsed_types = []
+
+    def fake_routes_to_df(response, enable_subway_details):
+        return pd.DataFrame(
+            {
+                "transport_type": ["bus", "train"],
+                "is_way_data": [False, False],
+                "members": [[], []],
+            }
+        )
+
+    def fake_ground_parser(row, local_crs, ref2speed, needed_tags):
+        parsed_types.append(row.transport_type)
+        return gpd.GeoDataFrame(), gpd.GeoDataFrame()
+
+    monkeypatch.setattr(public_transport_builders, "get_routes_by_poly", lambda polygon, types: [object()])
+    monkeypatch.setattr(public_transport_builders, "overpass_routes_to_df", fake_routes_to_df)
+    monkeypatch.setattr(public_transport_builders, "overpass_ground_transport2edgenode", fake_ground_parser)
+
+    # 'train' is present in the Overpass response but was not requested and is not
+    # in the default registry: it must be filtered out (no KeyError, no train edges).
+    graph = get_public_transport_graph(transport_types="bus", territory=TERRITORY)
+
+    assert "bus" in parsed_types
+    assert "train" not in parsed_types
+    assert graph.edges_gdf.empty
+
+
 # ---------------------------------------------------------------------------
 # join_pt_walk_graph edge cases (no network needed)
 # ---------------------------------------------------------------------------

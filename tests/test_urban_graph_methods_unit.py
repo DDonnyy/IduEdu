@@ -132,6 +132,33 @@ def test_nearest_nodes_function_uses_custom_series_name():
     assert result.loc[100] == 3
 
 
+def test_nearest_nodes_preserves_input_order_for_unsorted_index():
+    # Nodes at x = 0, 10, 20, 30 (index 0..3). Query points are given in an order
+    # that does not match either the spatial order or a sorted index, to guard the
+    # position remapping after the spatial-index query.
+    graph = undirected_line_graph()
+    objects = gpd.GeoDataFrame(
+        index=["far", "near", "mid"],
+        geometry=[Point(31.0, 0.0), Point(-1.0, 0.0), Point(21.0, 0.0)],
+        crs=CRS,
+    )
+
+    result = nearest_nodes(graph, objects)
+
+    assert result.index.tolist() == ["far", "near", "mid"]
+    assert result.tolist() == [3, 0, 2]
+
+
+def test_nearest_nodes_snaps_polygon_via_representative_point():
+    graph = undirected_line_graph()
+    # A polygon whose interior point sits nearest the node at x = 20.
+    objects = gpd.GeoDataFrame(index=[7], geometry=[box(18.0, -1.0, 22.0, 1.0)], crs=CRS)
+
+    result = nearest_nodes(graph, objects)
+
+    assert result.loc[7] == 2
+
+
 def test_validate_graph_public_api_reports_broken_edges():
     graph = undirected_line_graph()
     graph.edges_gdf.loc[0, "u"] = 999

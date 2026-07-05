@@ -1,3 +1,5 @@
+import multiprocessing
+
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -77,6 +79,50 @@ def _graph_data_to_urban_graph(
     graph_nodes_gdf["_x_group"] = graph_nodes_gdf.geometry.x.round()
     graph_nodes_gdf["_y_group"] = graph_nodes_gdf.geometry.y.round()
 
+    for column in ["node_id", "type", "route"]:
+        if column not in graph_nodes_gdf.columns:
+            graph_nodes_gdf[column] = np.nan
+
+    graph_nodes_gdf["_source_node_id"] = graph_nodes_gdf["node_id"]
+    graph_nodes_gdf["_geometry_key"] = graph_nodes_gdf.geometry.to_wkb()
+    duplicate_nodes = graph_nodes_gdf.duplicated(
+        subset=["_source_node_id", "_geometry_key", "route", "type"], keep="first"
+    )
+    if duplicate_nodes.any():
+        graph_nodes_gdf = graph_nodes_gdf.loc[~duplicate_nodes].copy()
+
+    node_lookup = graph_nodes_gdf[["_source_node_id", "route"]].copy()
+    node_lookup["node_id"] = np.arange(len(graph_nodes_gdf), dtype=np.int64)
+    graph_nodes_gdf["node_id"] = node_lookup["node_id"].to_numpy()
+
+    if not graph_edges_gdf.empty:
+        for column in ["u", "v", "route"]:
+            if column not in graph_edges_gdf.columns:
+                graph_edges_gdf[column] = np.nan
+
+        route_lookup = node_lookup.drop_duplicates(subset=["_source_node_id", "route"], keep="first")
+        source_counts = node_lookup.groupby("_source_node_id", dropna=False)["node_id"].nunique()
+        unique_source_ids = source_counts[source_counts == 1].index
+        source_lookup = (
+            node_lookup[node_lookup["_source_node_id"].isin(unique_source_ids)]
+            .drop_duplicates(subset=["_source_node_id"])
+            .set_index("_source_node_id")["node_id"]
+        )
+
+        for endpoint in ["u", "v"]:
+            mapped_column = f"_{endpoint}_mapped"
+            graph_edges_gdf = graph_edges_gdf.merge(
+                route_lookup.rename(columns={"_source_node_id": endpoint, "node_id": mapped_column}),
+                on=[endpoint, "route"],
+                how="left",
+            )
+            graph_edges_gdf[mapped_column] = graph_edges_gdf[mapped_column].fillna(
+                graph_edges_gdf[endpoint].map(source_lookup)
+            )
+            graph_edges_gdf[endpoint] = graph_edges_gdf[mapped_column]
+            graph_edges_gdf = graph_edges_gdf.drop(columns=[mapped_column])
+        graph_edges_gdf = gpd.GeoDataFrame(graph_edges_gdf, geometry="geometry", crs=local_crs)
+
     if "extra_data" not in graph_nodes_gdf.columns:
         graph_nodes_gdf["extra_data"] = [{} for _ in range(len(graph_nodes_gdf))]
 
@@ -144,18 +190,9 @@ def _graph_data_to_urban_graph(
             graph_type="public_transport",
         )
 
-    for column in ["u", "v", "type", "route", "geometry", "extra_data"]:
+    for column in ["u", "v", "type", "route", "geometry", "extra_data", "oneway"]:
         if column not in graph_edges_gdf.columns:
             graph_edges_gdf[column] = np.nan
-
-    missing_oneway = graph_edges_gdf["oneway"].isna()
-    if missing_oneway.any():
-        logger.warning(f"Filling {int(missing_oneway.sum())} PT edges with missing oneway values")
-        graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(object)
-        graph_edges_gdf.loc[missing_oneway, "oneway"] = (
-            ~graph_edges_gdf.loc[missing_oneway, "type"].astype(str).eq("boarding")
-        )
-    graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(bool)
 
     graph_edges_gdf["u"] = graph_edges_gdf["u"].map(map_nodeid_to_idx)
     graph_edges_gdf["v"] = graph_edges_gdf["v"].map(map_nodeid_to_idx)
@@ -184,6 +221,34 @@ def _graph_data_to_urban_graph(
     if "speed_m_min" not in graph_edges_gdf.columns:
         graph_edges_gdf["speed_m_min"] = np.nan
 
+    boarding_mask = graph_edges_gdf["type"].astype(str).eq("boarding")
+    if boarding_mask.any():
+        alighting_edges = graph_edges_gdf.loc[boarding_mask].copy()
+        alighting_edges["type"] = "alighting"
+        alighting_edges["length_meter"] = 0.0
+        alighting_edges["time_min"] = 0.0
+        alighting_edges["oneway"] = True
+
+        boarding_edges = graph_edges_gdf.loc[boarding_mask].copy()
+        boarding_edges[["u", "v"]] = boarding_edges[["v", "u"]].to_numpy()
+        boarding_edges["geometry"] = boarding_edges.geometry.reverse()
+        boarding_edges["length_meter"] = 0.0
+        boarding_edges["time_min"] = float(avg_boarding_time_min)
+        boarding_edges["oneway"] = True
+
+        graph_edges_gdf = gpd.GeoDataFrame(
+            pd.concat([graph_edges_gdf.loc[~boarding_mask], alighting_edges, boarding_edges], ignore_index=True),
+            geometry="geometry",
+            crs=local_crs,
+        )
+
+    missing_oneway = graph_edges_gdf["oneway"].isna()
+    if missing_oneway.any():
+        logger.warning(f"Filling {int(missing_oneway.sum())} PT edges with missing oneway values")
+        graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(object)
+        graph_edges_gdf.loc[missing_oneway, "oneway"] = True
+    graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(bool)
+
     def calc_len_time(row):
         """Calculate edge length and travel time for a public-transport edge."""
         geom = row.geometry
@@ -199,9 +264,10 @@ def _graph_data_to_urban_graph(
 
         return length_m, time_min
 
-    boarding_mask = graph_edges_gdf["type"].astype(str).eq("boarding")
-    graph_edges_gdf.loc[boarding_mask, "length_meter"] = 0.0
-    graph_edges_gdf.loc[boarding_mask, "time_min"] = float(avg_boarding_time_min)
+    free_pt_link_mask = graph_edges_gdf["type"].astype(str).isin({"boarding", "alighting"})
+    graph_edges_gdf.loc[free_pt_link_mask, "length_meter"] = 0.0
+    graph_edges_gdf.loc[graph_edges_gdf["type"].astype(str).eq("boarding"), "time_min"] = float(avg_boarding_time_min)
+    graph_edges_gdf.loc[graph_edges_gdf["type"].astype(str).eq("alighting"), "time_min"] = 0.0
 
     mask_missing = graph_edges_gdf["length_meter"].isna() | graph_edges_gdf["time_min"].isna()
 
@@ -281,7 +347,8 @@ def _build_public_transport_graph(
         clip_by_territory:
             If True, clip the final graph to the (projected) boundary.
         avg_boarding_time_min:
-            Time penalty for boarding edges. Boarding is stored once with ``oneway=False``.
+            Time penalty for directed platform-to-stop ``boarding`` edges. Reverse stop-to-platform ``alighting``
+            edges are added with zero travel time.
 
     Returns:
         ``UrbanGraph``: Directed public-transport graph with ``oneway`` edge direction column.
@@ -321,7 +388,7 @@ def _build_public_transport_graph(
     graph_edges_gdf = []
     graph_nodes_gdf = []
 
-    ground_types = {"bus", "tram", "trolleybus", "train"}
+    ground_types = {"bus", "tram", "trolleybus", "train"} & set(transport_types)
     ground_pt_data = overpass_data[
         (overpass_data["transport_type"].isin(ground_types)) & (~overpass_data["is_way_data"])
     ].copy()
@@ -330,7 +397,8 @@ def _build_public_transport_graph(
         if not config.enable_tqdm_bar:
             logger.debug("Parsing ground public transport routes")
 
-        if len(ground_pt_data) > 500:
+        use_processes = len(ground_pt_data) > 500 and multiprocessing.get_start_method(allow_none=False) == "fork"
+        if use_processes:
             results = process_map(
                 _multi_ground_to_edgenode,
                 [(row, local_crs, ref2speed, needed_tags) for _, row in ground_pt_data.iterrows()],
@@ -419,7 +487,8 @@ def get_public_transport_graph(
             parameters such as max speed, acceleration/braking distances, and traffic coefficient).
             If None, ``DEFAULT_REGISTRY`` is used.
         avg_boarding_time_min:
-            Time penalty added to boarding edges. Default is 1 minute.
+            Time penalty added to directed platform-to-stop boarding edges. Stop-to-platform alighting edges are added
+            with zero travel time. Default is 1 minute.
 
     Returns:
         Directed PT ``UrbanGraph`` with ``crs`` and ``type="public_transport"``.
