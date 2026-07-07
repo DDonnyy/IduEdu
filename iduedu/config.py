@@ -57,7 +57,7 @@ class Config:
 
         # --- Logging ---
         self.logger = logger
-        self.configure_logging(level=os.getenv("LOG_LEVEL", "INFO").upper())
+        self.configure_logging(level=os.getenv("LOG_LEVEL", "WARNING").upper())
 
         # --- Internals ---
         self._lock = threading.RLock()

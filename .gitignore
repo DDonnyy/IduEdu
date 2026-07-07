@@ -37,6 +37,7 @@ docs/_autoapi/
 docs/api/generated/
 docs/_autosummary/
 docs/_doctrees/
+docs/api/generated
 _build/
 _autosummary/
 
@@ -48,6 +49,3 @@ _autosummary/
 # OS junk
 .DS_Store
 Thumbs.db
-
-# Agents Code
-AGENTS.md

@@ -9,26 +9,52 @@
 [![GitHub](https://img.shields.io/badge/GitHub-IDUclub%2FIduEdu-181717?logo=github)](https://github.com/IDUclub/IduEdu)
 
 <p align="center">
-<img src="./docs/_static/leftguy.svg" alt="logo" height="250">
-<img src="./docs/_static/iduedulogo.svg" alt="logo" height="250">
-<img src="./docs/_static/rightguy.svg" alt="logo" height="250">
+<img src="./docs/_static/iduedu_header.svg" alt="IduEdu logo banner" width="100%">
 </p>
 
 **IduEdu** is an open-source Python toolkit for building and analyzing multimodal city networks from
 OpenStreetMap data. It downloads OSM data via Overpass, builds drive, walk, public-transport and
 intermodal networks, and stores them as `UrbanGraph` objects backed by GeoDataFrame node and edge tables.
 
+## Benchmark snapshot
+
+The benchmark below isolates city-scale pedestrian graph construction, comparing IduEdu's tabular
+`UrbanGraph` representation with OSMnx's widely used NetworkX-backed workflow on the same area of
+interest for each city. Both simplification modes are shown because `simplify` changes the trade-off
+between graph-construction time and the size of the resulting graph.
+
+![Pedestrian graph construction benchmark](./docs/_static/benchmark_walk_summary.png)
+
+Across these repeated B1 runs, IduEdu built pedestrian graphs in about **5.8-9.3x less time** without
+simplification and **3.3-6.0x less time** with simplification enabled. The resulting geospatial graph
+object had a **10-12x lower deterministic representation-size estimate**. Edge-row counts are shown as
+a representation detail:
+`UrbanGraph` can keep bidirectional walking edges as one row with a direction flag, while NetworkX-style
+directed multigraphs store separate directed edge rows.
+
+Full protocol notes, limitations and raw-result links are in the
+[benchmark documentation](https://iduclub.github.io/IduEdu/benchmarks.html).
+
 ## Documentation
 
 Full documentation is published at <https://iduclub.github.io/IduEdu/>.
 Migrating from the old NetworkX-first API? See the
-[UrbanGraph migration guide](docs/migration_to_urban_graph.md).
+[UrbanGraph migration guide](https://iduclub.github.io/IduEdu/migration_to_urban_graph.html).
+Runnable examples are available for
+[graph construction](https://iduclub.github.io/IduEdu/examples/get_any_graph.html),
+[UrbanGraph basics](https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html),
+[object projection](https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html), and
+[shortest paths](https://iduclub.github.io/IduEdu/examples/shortest_paths.html).
 
 ## Features
 
-- Build `UrbanGraph` networks for driving, walking, public transport and intermodal trips.
-- Keep graph topology, geometry, CRS and edge weights in explicit tabular form.
-- Compute shortest paths and OD matrices with Numba-backed sparse graph routines.
+- Store graph topology, geometry, CRS and edge weights in `UrbanGraph`, a GeoDataFrame-native graph model.
+- Build drive and walk graphs from OpenStreetMap with local metric projection and optional simplification.
+- Build static public-transport graphs directly from OSM relations for bus, trolleybus, tram and subway.
+- Combine pedestrian and public-transport layers into one intermodal graph by projecting stops, platforms
+  and station access points onto the walking network.
+- Compute shortest paths and OD matrices with Numba-backed CSR routines, cutoff thresholds and adaptive
+  graph reversal for unbalanced origin-destination sets.
 - Work with connected, weakly connected and strongly connected UrbanGraph components.
 - Convert to and from NetworkX through optional compatibility utilities.
 - Snap geometries to graph nodes with `nearest_nodes` and validate custom graph edits.

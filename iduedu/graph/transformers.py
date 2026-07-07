@@ -1,4 +1,3 @@
-import logging
 from typing import Literal
 
 import numpy as np
@@ -7,11 +6,12 @@ from pyproj import CRS
 from pyproj.aoi import AreaOfInterest
 from pyproj.database import query_utm_crs_info
 
+from iduedu.config import config
 from iduedu.graph.components import largest_component
 from iduedu.graph.editors import subgraph_by_nodes
 from iduedu.graph.urban_graph import UrbanGraph
 
-logger = logging.getLogger(__name__)
+logger = config.logger
 
 
 def estimate_crs_for_bounds(minx, miny, maxx, maxy) -> CRS:
@@ -42,6 +42,9 @@ def keep_largest_connected_component(
 
     With ``mode="auto"``, directed graphs use the largest strongly connected
     component and undirected graphs use the largest connected component.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
     """
 
     if not isinstance(graph, UrbanGraph):
@@ -76,6 +79,9 @@ def to_directed(
 
     ``default_direction_value=False`` makes existing edges traversable in both
     directions while still storing the graph as directed for adjacency building.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     if not isinstance(graph, UrbanGraph):
@@ -109,6 +115,9 @@ def to_undirected(graph: UrbanGraph) -> UrbanGraph:
 
     Direction columns are kept as regular edge attributes but are not used for
     adjacency construction.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     if not isinstance(graph, UrbanGraph):
@@ -146,6 +155,9 @@ def simplify_multiedges(
         TypeError: If ``graph`` is not an ``UrbanGraph``.
         KeyError: If ``weight`` is absent from ``edges_gdf``.
         ValueError: If weights contain ``NaN`` or ``rule`` is unsupported.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     if not isinstance(graph, UrbanGraph):

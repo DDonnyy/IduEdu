@@ -5,6 +5,9 @@ IduEdu represents transport networks with :class:`iduedu.UrbanGraph`.
 An ``UrbanGraph`` stores graph topology and geometry in two pandas-compatible
 tables: ``nodes_gdf`` and ``edges_gdf``.
 
+See :doc:`../examples/urban_graph_basics` for a runnable introduction to graph
+tables, validation, adjacency matrices, empty graphs, and ``.urbangraph`` IO.
+
 Nodes table
 -----------
 

@@ -23,6 +23,9 @@ class TransportSpec:
         traffic_coef (float):
             Traffic slowdown coefficient. Values below 1.0 reduce effective speed due to congestion,
             values close to 1.0 indicate free-flow or priority operation.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/transport_registry.html
     """
 
     name: str
@@ -131,6 +134,9 @@ class TransportRegistry:
 
     The registry is used throughout graph construction to compute per-edge travel times
     consistently across different transport modes.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/transport_registry.html
     """
 
     def __init__(self, specs: dict[str, TransportSpec] | None = None):

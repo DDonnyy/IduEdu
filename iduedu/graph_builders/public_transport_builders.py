@@ -492,6 +492,10 @@ def get_public_transport_graph(
 
     Returns:
         Directed PT ``UrbanGraph`` with ``crs`` and ``type="public_transport"``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
+        https://iduclub.github.io/IduEdu/examples/transport_registry.html
     """
     if avg_boarding_time_min < 0:
         raise ValueError(f"avg_boarding_time_min must be >= 0, got {avg_boarding_time_min}")

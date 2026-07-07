@@ -26,6 +26,9 @@ def nearest_nodes(
     Raises:
         TypeError: If ``gdf`` is not a GeoDataFrame.
         ValueError: If graph or object geometries cannot be matched safely.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
     """
 
     if not isinstance(gdf, gpd.GeoDataFrame):

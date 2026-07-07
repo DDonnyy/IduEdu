@@ -2,9 +2,12 @@ import geopandas as gpd
 import networkx as nx
 import numpy as np
 import pandas as pd
-from loguru import logger
 from shapely import LineString, MultiLineString, Point, Polygon, from_wkt, line_merge, node
 from shapely.geometry.base import BaseGeometry
+
+from iduedu.config import config
+
+logger = config.logger
 
 
 def keep_largest_nx_component(graph: nx.Graph, copy: bool = True) -> nx.Graph:

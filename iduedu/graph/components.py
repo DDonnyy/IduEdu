@@ -35,6 +35,9 @@ def connected_components(graph: UrbanGraph) -> list[set[Any]]:
 
     For directed graphs use :func:`weakly_connected_components` or
     :func:`strongly_connected_components` explicitly.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
     """
 
     _validate_graph(graph)
@@ -52,6 +55,9 @@ def weakly_connected_components(graph: UrbanGraph) -> list[set[Any]]:
 
     Edge directions are ignored. For undirected graphs this is equivalent to
     :func:`connected_components`.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
     """
 
     _validate_graph(graph)
@@ -66,6 +72,9 @@ def strongly_connected_components(graph: UrbanGraph) -> list[set[Any]]:
 
     For undirected graphs this is equivalent to connected components and emits
     a warning.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
     """
 
     _validate_graph(graph)
@@ -88,34 +97,58 @@ def strongly_connected_components(graph: UrbanGraph) -> list[set[Any]]:
 
 
 def number_connected_components(graph: UrbanGraph) -> int:
-    """Return the number of connected components in an undirected graph."""
+    """Return the number of connected components in an undirected graph.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     return len(connected_components(graph))
 
 
 def number_weakly_connected_components(graph: UrbanGraph) -> int:
-    """Return the number of weakly connected components."""
+    """Return the number of weakly connected components.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     return len(weakly_connected_components(graph))
 
 
 def number_strongly_connected_components(graph: UrbanGraph) -> int:
-    """Return the number of strongly connected components."""
+    """Return the number of strongly connected components.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     return len(strongly_connected_components(graph))
 
 
 def largest_connected_component(graph: UrbanGraph) -> set[Any]:
-    """Return the largest connected component of an undirected graph."""
+    """Return the largest connected component of an undirected graph.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     components = connected_components(graph)
     return components[0] if components else set()
 
 
 def largest_weakly_connected_component(graph: UrbanGraph) -> set[Any]:
-    """Return the largest weakly connected component."""
+    """Return the largest weakly connected component.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     components = weakly_connected_components(graph)
     return components[0] if components else set()
 
 
 def largest_strongly_connected_component(graph: UrbanGraph) -> set[Any]:
-    """Return the largest strongly connected component."""
+    """Return the largest strongly connected component.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
+    """
     components = strongly_connected_components(graph)
     return components[0] if components else set()
 
@@ -134,6 +167,9 @@ def largest_component(graph: UrbanGraph, mode: ComponentMode = "auto") -> set[An
 
     Raises:
         ValueError: If ``mode`` is not supported.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/connectivity.html
     """
     _validate_graph(graph)
     if mode == "auto":

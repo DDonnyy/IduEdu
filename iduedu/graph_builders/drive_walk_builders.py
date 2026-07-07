@@ -230,6 +230,9 @@ def get_drive_graph(
         geometry in the local CRS, length, travel time, direction metadata and selected OSM tags. The graph
         keeps the local projected CRS and selected network type as metadata.
 
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
+
     """
     polygon4326 = get_4326_boundary(osm_id=osm_id, territory=territory)
 
@@ -386,6 +389,9 @@ def get_walk_graph(
     Notes:
         All walking edges are treated as bidirectional by the undirected UrbanGraph adjacency builder.
         Lengths are measured in meters in a local projected CRS estimated from the territory bounds.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
     """
     polygon4326 = get_4326_boundary(osm_id=osm_id, territory=territory)
 

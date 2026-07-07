@@ -10,7 +10,6 @@ minutes for ``time_min`` and meters for ``length_meter``. Unreachable nodes or
 pairs are represented as ``np.inf``.
 """
 
-import logging
 from typing import Any, Iterable, Literal
 
 import numba as nb
@@ -26,10 +25,11 @@ from iduedu._numba.shortest_paths import (
     multi_source_dijkstra_numba_path_length,
     single_source_dijkstra_numba_path_length,
 )
+from iduedu.config import config
 from iduedu.graph.graph_inputs import resolve_graph_nodes_input
 from iduedu.graph.urban_graph import UrbanGraph
 
-logger = logging.getLogger(__name__)
+logger = config.logger
 
 NODE_INDEX_NAME = "node"
 DIST_COLUMN = "dist"
@@ -159,6 +159,9 @@ def single_source_dijkstra_path_length(
     Returns:
         Sparse ``Series`` indexed by reachable graph node ids with path distances
         from ``source_node``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/shortest_paths.html
     """
 
     numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=cutoff, reverse=reverse)
@@ -203,6 +206,9 @@ def multi_source_dijkstra_path_length(
     Returns:
         Sparse ``Series`` indexed by reachable graph node ids. The normalized source
         mapping is stored in ``result.attrs["source_nodes"]``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/shortest_paths.html
     """
 
     source_nodes_s = resolve_graph_nodes_input(
@@ -245,6 +251,9 @@ def multi_source_dijkstra_nearest_source(
         ``DataFrame`` indexed by reachable graph node ids with ``source_node`` and
         ``dist`` columns. The normalized source mapping is stored in
         ``result.attrs["source_nodes"]``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/shortest_paths.html
     """
 
     source_nodes_s = resolve_graph_nodes_input(
@@ -321,6 +330,9 @@ def dijkstra_path_length_parallel(
         Sparse ``DataFrame`` whose rows are source objects and whose columns are
         reachable graph node ids. The normalized source mapping is stored in
         ``result.attrs["source_nodes"]``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/shortest_paths.html
     """
 
     _validate_max_workers(max_workers)
@@ -410,6 +422,9 @@ def od_matrix(
         TypeError: If the graph type or ``max_workers`` is invalid.
         ValueError: If inputs are empty, the threshold is negative or requested nodes
             are absent from the graph.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/shortest_paths.html
     """
 
     _validate_max_workers(max_workers)

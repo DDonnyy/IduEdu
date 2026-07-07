@@ -2,6 +2,7 @@ from typing import Any
 
 import geopandas as gpd
 import pandas as pd
+import pyproj
 
 
 def gdf_crs(frame) -> Any | None:
@@ -27,6 +28,8 @@ def sync_graph_crs(graph) -> None:
     if inferred_crs is None:
         graph.crs = None
         return
+
+    inferred_crs = pyproj.CRS.from_user_input(inferred_crs)
 
     for name, frame_crs in (("nodes_gdf", nodes_crs), ("edges_gdf", edges_crs)):
         if frame_crs is not None and frame_crs != inferred_crs:

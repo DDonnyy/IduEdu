@@ -34,6 +34,10 @@ def join_pt_walk_graph(
     Public-transport platform-like nodes are projected to the walk graph via
     :func:`project_objects2urban_graph`. Platforms farther than ``max_dist``
     from the walking network are left as regular PT nodes.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
+        https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
     """
 
     if public_transport_g.crs != walk_g.crs:
@@ -201,42 +205,43 @@ def get_intermodal_graph(
     pt_kwargs: dict[str, Any] | None = None,
 ) -> UrbanGraph:
     """
-    Build an intermodal (PT+walking) graph for a territory by downloading, parsing, and joining both networks.
+    Build an intermodal (PT+walking) ``UrbanGraph`` for a territory.
 
-    The function resolves a boundary polygon (by `osm_id` or `territory`), runs **in parallel**:
-    1) pedestrian network construction (`get_walk_graph`),
-    2) public-transport network construction for selected modes (`get_public_transport_graph`),
-    then connects PT platforms to nearby walk edges via `join_pt_walk_graph` using a snapping radius `max_dist`.
-    Edge lengths (m) and times (min) come from the underlying builders and from the walk-edge splits.
+    The function resolves a boundary polygon (by ``osm_id`` or ``territory``),
+    runs pedestrian graph construction (:func:`get_walk_graph`) and public
+    transport graph construction (:func:`get_public_transport_graph`) in
+    parallel, then connects public-transport platforms to nearby walk edges via
+    :func:`join_pt_walk_graph` using the ``max_dist`` snapping radius. Edge
+    lengths (meters) and travel times (minutes) come from the underlying
+    builders and from the walk-edge splits created during projection.
 
     Parameters:
-        osm_id (int | None): OSM relation/area id for the territory; provide this or `territory`.
+        osm_id (int | None): OSM relation/area id for the territory; provide this or ``territory``.
         territory (Polygon | MultiPolygon | gpd.GeoDataFrame | None): Boundary geometry in EPSG:4326.
         clip_by_territory (bool): If True, both PT and Walk graphs are clipped to the boundary.
-        keep_edge_geometry (bool): If True, keep `shapely` geometries on edges for both sub-graphs.
         osm_edge_tags (list[str] | None): Subset of OSM tags to retain (forwarded to both builders).
         max_dist (float): Max distance in meters to connect PT platforms to walk edges.
         keep_largest_subgraph (bool): If True, keep only the largest strongly connected component after joining.
-        walk_kwargs (dict[str, Any] | None): Extra keyword args for `get_walk_graph` (e.g., `walk_speed`,
-            `simplify`, `osm_edge_tags`, `keep_largest_subgraph`, ...). Walk graph keep_largest_subgraph defaults to
+        add_link_edge (bool): If True, add platform-to-walk connector edges during projection.
+        walk_kwargs (dict[str, Any] | None): Extra keyword args for :func:`get_walk_graph` (e.g., ``walk_speed``,
+            ``simplify``, ``osm_edge_tags``, ``keep_largest_subgraph``). Walk graph keep_largest_subgraph defaults to
             False unless explicitly set here.
-        pt_kwargs (dict[str, Any] | None): Extra keyword args for `get_public_transport_graph`
-            (e.g., `transport_types`, `osm_edge_tags`, `keep_edge_geometry`, ...).
+        pt_kwargs (dict[str, Any] | None): Extra keyword args for :func:`get_public_transport_graph`
+            (e.g., ``transport_types``, ``osm_edge_tags``, ``transport_registry``).
 
     Returns:
-        (nx.Graph): Intermodal `MultiDiGraph` combining public transport and pedestrian networks, with:
-            - node attrs: `x`, `y` (local CRS), plus PT metadata for platform/station nodes where present;
-            - edge attrs: `type` (e.g., "walk", PT edge types), `length_meter`, `time_min`, optional `geometry`,
-              and selected OSM tags.
-
-          Graph CRS equals the builders' local projected CRS.
+        Intermodal ``UrbanGraph`` combining public transport and pedestrian
+        edges. The graph CRS equals the builders' local projected CRS.
 
     Notes:
-        - `keep_edge_geometry`, `clip_by_territory`, and `osm_edge_tags` are propagated to both builders unless
-          overridden in `walk_kwargs`/`pt_kwargs`.
+        - ``clip_by_territory`` and ``osm_edge_tags`` are propagated to both builders unless
+          overridden in ``walk_kwargs``/``pt_kwargs``.
         - If the PT graph is empty for the area, the function returns the walking graph alone (with a warning).
-        - Joining requires both sub-graphs to share the same CRS; builders derive a **local projected CRS**
+        - Joining requires both sub-graphs to share the same CRS; builders derive a local projected CRS
           from the boundary's extent, so lengths/times are in meters/minutes.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
     """
     boundary = get_4326_boundary(osm_id=osm_id, territory=territory)
 

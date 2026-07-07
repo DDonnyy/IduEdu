@@ -50,6 +50,9 @@ def write_urban_graph(
         TypeError: If ``graph`` is not an ``UrbanGraph``.
         ValueError: If ``path`` does not use the ``.urbangraph`` suffix.
         ImportError: If parquet support is not installed.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html
     """
 
     if not isinstance(graph, UrbanGraph):
@@ -108,6 +111,9 @@ def read_urban_graph(path: str | Path, *, validate: bool = True) -> UrbanGraph:
         ValueError: If the archive is missing required members or uses an
             unsupported format version.
         ImportError: If parquet support is not installed.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html
     """
 
     archive_path = _normalize_urbangraph_path(path)

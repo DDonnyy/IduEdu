@@ -286,6 +286,9 @@ def get_4326_boundary(
         >>> get_4326_boundary(territory=poly4326)         # keep polygon
         >>> get_4326_boundary(territory=multi_poly_4326)  # convex hull of multipart
         >>> get_4326_boundary(territory=territory_gdf)    # GDF -> to_crs(4326) -> union_all -> Polygon
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/get_any_graph.html
     """
     if osm_id is not None:
         territory = get_boundary_by_osm_id(osm_id)

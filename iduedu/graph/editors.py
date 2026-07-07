@@ -101,6 +101,9 @@ def relabel_urban_graph(graph_gdf: UrbanGraph) -> UrbanGraph:
 
     The function does not mutate the source graph. For multigraphs, ``k`` is
     recalculated after relabeling to keep ``['u', 'v', 'k']`` unique.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     nodes = graph_gdf.nodes_gdf.copy()
@@ -139,6 +142,9 @@ def subgraph_by_nodes(graph_gdf: UrbanGraph, nodes) -> UrbanGraph:
 
     Node ids are preserved. Edges are retained only when both endpoints are in
     ``nodes``.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     if not isinstance(graph_gdf, UrbanGraph):
@@ -179,6 +185,9 @@ def clip_urban_graph(graph_gdf: UrbanGraph, polygon: BaseGeometry) -> UrbanGraph
 
     ``polygon`` is expected to be in the same CRS as ``graph_gdf``. Node ids are
     preserved; call :func:`relabel_urban_graph` if dense labels are needed.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     nodes = graph_gdf.nodes_gdf.copy()
@@ -222,6 +231,9 @@ def join_urban_graphs(
     Shared node indexes are allowed and are merged according to
     ``node_conflict``. Edge keys must be unique across both graphs because
     duplicate edges are ambiguous at this layer.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/graph_operations.html
     """
 
     if not isinstance(left, UrbanGraph):
@@ -330,6 +342,9 @@ def project_objects2urban_graph(
     Raises:
         TypeError: If ``objects_gdf`` is not a GeoDataFrame.
         ValueError: If objects are empty or speed/distance parameters are invalid.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
     """
 
     gdf_edges = graph_gdf.edges_gdf.copy()
@@ -680,6 +695,9 @@ def apply_urban_graph_changes(graph_gdf: UrbanGraph, changes: UrbanGraphChanges)
     Raises:
         ValueError: If graph and change topology flags differ or if
             ``edges_to_delete`` references edges that are absent from the graph.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
     """
 
     if graph_gdf.is_multigraph != changes.is_multigraph:

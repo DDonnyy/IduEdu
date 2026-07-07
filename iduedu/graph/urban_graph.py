@@ -41,6 +41,9 @@ class UrbanGraph:
     Raises:
         TypeError: If node or edge tables use unsupported types.
         ValueError: If graph table contracts are violated.
+
+    See also:
+        https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html
     """
 
     __slots__ = (
@@ -86,10 +89,16 @@ class UrbanGraph:
         self.validate()
 
     def __repr__(self) -> str:
+        crs = self.crs
+        if crs is not None:
+            epsg = crs.to_epsg()
+            crs_str = f"EPSG:{epsg}" if epsg is not None else crs.to_string()
+        else:
+            crs_str = None
         return (
             f"UrbanGraph(nodes={len(self.nodes_gdf)}, edges={len(self.edges_gdf)}, "
             f"is_multigraph={self.is_multigraph}, is_directed={self.is_directed}, "
-            f"edge_direction_column={self.edge_direction_column!r}, crs={self.crs!r}, type={self.type!r})"
+            f"edge_direction_column={self.edge_direction_column!r}, crs={crs_str!r}, type={self.type!r})"
         )
 
     @classmethod
@@ -171,6 +180,9 @@ class UrbanGraph:
 
         Returns:
             Path to the written archive.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html
         """
 
         from iduedu.graph.io import write_urban_graph
@@ -187,6 +199,9 @@ class UrbanGraph:
 
         Returns:
             Restored graph instance.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/urban_graph_basics.html
         """
 
         from iduedu.graph.io import read_urban_graph
@@ -286,35 +301,55 @@ class UrbanGraph:
         return self._build_adjacency_matrix(nodelist=nodelist, weight=weight, multigraph_rule=multigraph_rule)
 
     def connected_components(self) -> list[set[Any]]:
-        """Return connected components for an undirected graph."""
+        """Return connected components for an undirected graph.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/connectivity.html
+        """
 
         from iduedu.graph.components import connected_components
 
         return connected_components(self)
 
     def weakly_connected_components(self) -> list[set[Any]]:
-        """Return weakly connected components, ignoring edge direction."""
+        """Return weakly connected components, ignoring edge direction.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/connectivity.html
+        """
 
         from iduedu.graph.components import weakly_connected_components
 
         return weakly_connected_components(self)
 
     def strongly_connected_components(self) -> list[set[Any]]:
-        """Return strongly connected components."""
+        """Return strongly connected components.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/connectivity.html
+        """
 
         from iduedu.graph.components import strongly_connected_components
 
         return strongly_connected_components(self)
 
     def largest_component(self, *, mode: Literal["auto", "connected", "weak", "strong"] = "auto") -> set[Any]:
-        """Return the largest component according to the selected mode."""
+        """Return the largest component according to the selected mode.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/connectivity.html
+        """
 
         from iduedu.graph.components import largest_component
 
         return largest_component(self, mode=mode)
 
     def subgraph_by_nodes(self, nodes: Iterable[Any]) -> "UrbanGraph":
-        """Return the node-induced subgraph for ``nodes``."""
+        """Return the node-induced subgraph for ``nodes``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
+        """
 
         from iduedu.graph.editors import subgraph_by_nodes
 
@@ -326,7 +361,11 @@ class UrbanGraph:
         mode: Literal["auto", "connected", "weak", "strong"] = "auto",
         inplace: bool = False,
     ) -> "UrbanGraph":
-        """Keep only the largest graph component."""
+        """Keep only the largest graph component.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/connectivity.html
+        """
 
         from iduedu.graph.transformers import keep_largest_connected_component
 
@@ -347,7 +386,11 @@ class UrbanGraph:
         reverse: bool = False,
         dtype: np.dtype = np.float32,
     ) -> pd.Series:
-        """Run single-source Dijkstra shortest path search on this graph."""
+        """Run single-source Dijkstra shortest path search on this graph.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/shortest_paths.html
+        """
 
         from iduedu.graph.shortest_paths import single_source_dijkstra_path_length
 
@@ -371,7 +414,11 @@ class UrbanGraph:
         reverse: bool = False,
         dtype: np.dtype = np.float32,
     ) -> pd.Series:
-        """Run multi-source Dijkstra shortest path search on this graph."""
+        """Run multi-source Dijkstra shortest path search on this graph.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/shortest_paths.html
+        """
 
         from iduedu.graph.shortest_paths import multi_source_dijkstra_path_length
 
@@ -397,7 +444,11 @@ class UrbanGraph:
         reverse: bool = False,
         dtype: np.dtype = np.float32,
     ) -> pd.DataFrame:
-        """Find the nearest source node and distance for each reachable graph node."""
+        """Find the nearest source node and distance for each reachable graph node.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/shortest_paths.html
+        """
 
         from iduedu.graph.shortest_paths import multi_source_dijkstra_nearest_source
 
@@ -424,7 +475,11 @@ class UrbanGraph:
         dtype: np.dtype = np.float32,
         max_workers: int | None = None,
     ) -> pd.DataFrame:
-        """Run independent Dijkstra searches for multiple source nodes."""
+        """Run independent Dijkstra searches for multiple source nodes.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/shortest_paths.html
+        """
 
         from iduedu.graph.shortest_paths import dijkstra_path_length_parallel
 
@@ -453,7 +508,11 @@ class UrbanGraph:
         threshold: float | None = None,
         max_workers: int | None = None,
     ) -> pd.DataFrame:
-        """Calculate an OD matrix of shortest paths on this graph."""
+        """Calculate an OD matrix of shortest paths on this graph.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/shortest_paths.html
+        """
 
         from iduedu.graph.shortest_paths import od_matrix
 
@@ -537,6 +596,9 @@ class UrbanGraph:
 
         Returns:
             Simplified ``UrbanGraph``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from iduedu.graph.transformers import simplify_multiedges
@@ -560,6 +622,9 @@ class UrbanGraph:
 
         Returns:
             ``UrbanGraph`` with updated node indexes and edge endpoints.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from .editors import relabel_urban_graph
@@ -585,6 +650,9 @@ class UrbanGraph:
 
         Returns:
             Clipped ``UrbanGraph``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from .editors import clip_urban_graph
@@ -620,6 +688,9 @@ class UrbanGraph:
 
         Returns:
             Joined ``UrbanGraph``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from iduedu.graph.editors import join_urban_graphs
@@ -651,6 +722,9 @@ class UrbanGraph:
 
         Returns:
             Directed ``UrbanGraph``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from iduedu.graph.transformers import to_directed
@@ -677,6 +751,9 @@ class UrbanGraph:
 
         Returns:
             Undirected ``UrbanGraph``.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/graph_operations.html
         """
 
         from .transformers import to_undirected
@@ -705,6 +782,9 @@ class UrbanGraph:
 
         Returns:
             Series indexed like ``objects_gdf`` with nearest node ids as values.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
         """
 
         from iduedu.graph.graph_inputs import nearest_nodes
@@ -742,6 +822,9 @@ class UrbanGraph:
         Returns:
             Pair ``(graph, object2node_map)``. ``object2node_map`` is indexed by the
             original object index and contains graph node ids.
+
+        See also:
+            https://iduclub.github.io/IduEdu/examples/objects_and_nearest_nodes.html
         """
 
         from iduedu.graph.editors import apply_urban_graph_changes, project_objects2urban_graph
