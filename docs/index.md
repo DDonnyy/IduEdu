@@ -36,7 +36,8 @@ Examples <examples/index>
 - **Intermodal graphs**: `get_intermodal_graph` combines public transport and walk networks by projecting
   stops, platforms and subway access points onto pedestrian edges.
 - **Matrices and shortest paths**: `od_matrix` and Dijkstra helpers use Numba-backed CSR kernels, cutoff
-  thresholds and adaptive graph reversal for large accessibility workloads.
+  thresholds and adaptive graph reversal for large accessibility workloads. Ordered node routes can
+  be converted back to their real edge geometries for map visualization.
 - **Interoperability**: optional NetworkX adapters are available for projects that need graph exchange or
   compatibility with older workflows.
 
