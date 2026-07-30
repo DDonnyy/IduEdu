@@ -136,7 +136,8 @@ Common entry points are available directly from `iduedu`:
 - Graph IO: `read_urban_graph`, `write_urban_graph`, `UrbanGraph.read`, `UrbanGraph.write`.
 - Components: `connected_components`, `weakly_connected_components`, `strongly_connected_components`,
   `largest_component`.
-- Shortest paths and matrices: `single_source_dijkstra_path_length`, `multi_source_dijkstra_path_length`,
+- Shortest paths and matrices: `single_source_dijkstra_path`, `multi_source_dijkstra_path`, `path_to_edges`,
+  `single_source_dijkstra_path_length`, `multi_source_dijkstra_path_length`,
   `multi_source_dijkstra_nearest_source`, `dijkstra_path_length_parallel`, `od_matrix`.
 - Optional NetworkX helpers: `graph2gdf`, `gdf2graph`, `read_gml`, `write_gml`, `clip_nx_graph`,
   `reproject_graph`.
