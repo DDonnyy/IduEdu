@@ -168,57 +168,6 @@ def _sparse_path_series(paths: list[list[Any] | None], *, index: pd.Index, name:
     )
 
 
-def _all_to_all_paths_dataframe(
-    path_rows,
-    *,
-    origin_index: pd.Index,
-    destination_index: pd.Index,
-    pos_to_node: np.ndarray,
-    transposed: bool,
-) -> pd.DataFrame:
-    columns = []
-    for destination_i, destination_label in enumerate(destination_index):
-        if transposed:
-            paths = [
-                _path_positions_to_nodes(
-                    path_rows[destination_i][origin_i],
-                    pos_to_node=pos_to_node,
-                    reverse=True,
-                )
-                for origin_i in range(len(origin_index))
-            ]
-        else:
-            paths = [
-                _path_positions_to_nodes(
-                    path_rows[origin_i][destination_i],
-                    pos_to_node=pos_to_node,
-                )
-                for origin_i in range(len(origin_index))
-            ]
-        columns.append(_sparse_path_series(paths, index=origin_index, name=destination_label))
-
-    result = pd.concat(columns, axis=1)
-    result.columns = destination_index
-    return result
-
-
-def _pairwise_paths_dataframe(
-    path_rows,
-    *,
-    origin_index: pd.Index,
-    destination_index: pd.Index,
-    pos_to_node: np.ndarray,
-) -> pd.DataFrame:
-    pair_index = pd.MultiIndex.from_arrays(
-        [origin_index, destination_index],
-        names=["origin", "destination"],
-    )
-    paths = [
-        _path_positions_to_nodes(path_rows[pair_i][0], pos_to_node=pos_to_node) for pair_i in range(len(pair_index))
-    ]
-    return _sparse_path_series(paths, index=pair_index, name=PATH_COLUMN).to_frame()
-
-
 def single_source_dijkstra_path(
     urban_graph: UrbanGraph,
     source_node: Any,
@@ -284,6 +233,48 @@ def multi_source_dijkstra_path(
     returns one sparse ``path`` column.
     """
 
+    def _all_to_all_paths_dataframe(
+        path_rows,
+        *,
+        origin_index: pd.Index,
+        destination_index: pd.Index,
+        pos_to_node: np.ndarray,
+        transposed: bool,
+    ) -> pd.DataFrame:
+        columns = []
+        for destination_i, destination_label in enumerate(destination_index):
+            if transposed:
+                paths = [
+                    _path_positions_to_nodes(path_rows[destination_i][origin_i], pos_to_node=pos_to_node, reverse=True)
+                    for origin_i in range(len(origin_index))
+                ]
+            else:
+                paths = [
+                    _path_positions_to_nodes(path_rows[origin_i][destination_i], pos_to_node=pos_to_node)
+                    for origin_i in range(len(origin_index))
+                ]
+            columns.append(_sparse_path_series(paths, index=origin_index, name=destination_label))
+
+        result = pd.concat(columns, axis=1)
+        result.columns = destination_index
+        return result
+
+    def _pairwise_paths_dataframe(
+        path_rows,
+        *,
+        origin_index: pd.Index,
+        destination_index: pd.Index,
+        pos_to_node: np.ndarray,
+    ) -> pd.DataFrame:
+        pair_index = pd.MultiIndex.from_arrays(
+            [origin_index, destination_index],
+            names=["origin", "destination"],
+        )
+        paths = [
+            _path_positions_to_nodes(path_rows[pair_i][0], pos_to_node=pos_to_node) for pair_i in range(len(pair_index))
+        ]
+        return _sparse_path_series(paths, index=pair_index, name=PATH_COLUMN).to_frame()
+
     _validate_max_workers(max_workers)
     if mode not in {"all_to_all", "pairwise"}:
         raise ValueError(f"mode must be 'all_to_all' or 'pairwise', got {mode!r}")
@@ -319,12 +310,7 @@ def multi_source_dijkstra_path(
         calc_origins = origin_nodes_s.to_numpy()
         calc_destinations = destination_nodes_s.to_numpy()
 
-    numba_adj_matrix = _prepare_numba_graph(
-        urban_graph,
-        weight=weight,
-        cutoff=threshold,
-        reverse=transposed,
-    )
+    numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=threshold, reverse=transposed)
     origin_positions = _node_positions(urban_graph, calc_origins)
     destination_positions = _node_positions(urban_graph, calc_destinations)
     if max_workers is not None:
@@ -448,11 +434,7 @@ def multi_source_dijkstra_path_length(
 
     numba_adj_matrix = _prepare_numba_graph(urban_graph, weight=weight, cutoff=cutoff, reverse=reverse)
     source_positions = _node_positions(urban_graph, pd.Index(source_nodes_s.to_numpy()).unique())
-    reachable_pairs = multi_source_dijkstra_numba_path_length(
-        numba_adj_matrix,
-        source_positions,
-        _cutoff2float(cutoff),
-    )
+    reachable_pairs = multi_source_dijkstra_numba_path_length(numba_adj_matrix, source_positions, _cutoff2float(cutoff))
     result = _path_length_series(reachable_pairs, pos_to_node=_pos_to_node_array(urban_graph), dtype=dtype)
     result.attrs[SOURCE_NODES_ATTR] = source_nodes_s
     return result
@@ -584,10 +566,7 @@ def dijkstra_path_length_parallel(
     else:
         reachable_col_positions = np.array([], dtype=np.int32)
         compact_cols = np.array([], dtype=np.int32)
-    reachable_columns = pd.Index(
-        _pos_to_node_array(urban_graph)[reachable_col_positions],
-        name=NODE_INDEX_NAME,
-    )
+    reachable_columns = pd.Index(_pos_to_node_array(urban_graph)[reachable_col_positions], name=NODE_INDEX_NAME)
 
     path_matrix = sparse.coo_matrix(
         (values.astype(dtype), (rows, compact_cols)),
@@ -597,11 +576,9 @@ def dijkstra_path_length_parallel(
     if len(values) > 0:
         dense_result[rows, compact_cols] = values.astype(dtype)
 
-    result = pd.DataFrame(
-        dense_result,
-        index=source_nodes_s.index,
-        columns=reachable_columns,
-    ).astype(pd.SparseDtype(dtype, fill_value=np.inf))
+    result = pd.DataFrame(dense_result, index=source_nodes_s.index, columns=reachable_columns).astype(
+        pd.SparseDtype(dtype, fill_value=np.inf)
+    )
     result.attrs[SOURCE_NODES_ATTR] = source_nodes_s
     return result
 
@@ -807,7 +784,5 @@ def path_to_edges(
         selected_edges.append(selected)
 
     return gpd.GeoDataFrame(
-        pd.concat(selected_edges, axis=0),
-        geometry=urban_graph.edges_gdf.geometry.name,
-        crs=urban_graph.edges_gdf.crs,
+        pd.concat(selected_edges, axis=0), geometry=urban_graph.edges_gdf.geometry.name, crs=urban_graph.edges_gdf.crs
     )
