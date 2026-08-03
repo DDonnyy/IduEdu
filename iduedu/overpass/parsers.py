@@ -12,12 +12,30 @@ from scipy.spatial.distance import cdist
 from shapely import LineString, MultiLineString, Point, line_merge
 from shapely.ops import substring
 
+from iduedu import config
 from iduedu.constants.highway_enums import HighwayType
 from iduedu.overpass.downloaders import fetch_member_tags
+
+logger = config.logger
 
 PLATFORM_ROLES = ["platform_entry_only", "platform", "platform_exit_only"]
 STOPS_ROLES = ["stop", "stop_exit_only", "stop_entry_only"]
 THRESHOLD_METERS = 100
+SUBWAY_EDGE_COLUMNS = ["u_ref", "v_ref", "type", "length_meter", "time_min", "geometry", "oneway"]
+
+
+def _empty_subway_edges(to_crs) -> gpd.GeoDataFrame:
+    """Return an empty edge table shaped like the output of :func:`parse_overpass_subway_data`.
+
+    Callers merge this table with route-derived edges on ``["u", "v", "type"]``, so the columns
+    have to be present even when a territory has no stop-area data at all.
+    """
+
+    return gpd.GeoDataFrame(
+        pd.DataFrame(columns=SUBWAY_EDGE_COLUMNS),
+        geometry=gpd.GeoSeries([], crs=to_crs),
+        crs=to_crs,
+    )
 
 
 def parse_maxspeed_to_m_per_min(raw: str | int | float | None) -> float | None:
@@ -1092,9 +1110,8 @@ def parse_overpass_subway_data(
                 new_lon, new_lat = LineString((xy["lon"], xy["lat"]) for xy in node["geometry"]).centroid.xy
                 node["lon"], node["lat"] = new_lon[0], new_lat[0]
             if "lon" not in node:
-                print(node)
+                logger.debug(f"Skipping stop area member without coordinates: {node}")
                 continue
-                node["lon"], node["lat"] = None, None
 
             add_node(node["ref"], node["lon"], node["lat"], node["role"])
 
@@ -1151,7 +1168,7 @@ def parse_overpass_subway_data(
     edges_df = pd.DataFrame(graph_edges, columns=["u_ref", "v_ref", "type", "oneway"])
 
     if len(nodes_gdf) == 0:
-        return gpd.GeoDataFrame(), nodes_gdf
+        return _empty_subway_edges(to_crs), nodes_gdf
 
     nodes_gdf = nodes_gdf.dropna(subset=["geometry"]).drop_duplicates(subset=["ref_id"])
     nodes_gdf["extra_data"] = [{} for _ in range(len(nodes_gdf))]
@@ -1176,7 +1193,7 @@ def parse_overpass_subway_data(
         return 0.0
 
     if len(edges_df) == 0:
-        return gpd.GeoDataFrame(), nodes_gdf
+        return _empty_subway_edges(to_crs), nodes_gdf
 
     nodes_info = nodes_gdf[["ref_id", "geometry", "type", "extra_data"]].copy()
     nodes_info["depth_m"] = nodes_info["extra_data"].apply(_depth_from_extra)
@@ -1200,7 +1217,7 @@ def parse_overpass_subway_data(
     missing_endpoint = edges_nodes["u_geometry"].isna() | edges_nodes["v_geometry"].isna()
     edges_nodes = edges_nodes.loc[~missing_endpoint].copy()
     if len(edges_nodes) == 0:
-        return gpd.GeoDataFrame(), nodes_gdf
+        return _empty_subway_edges(to_crs), nodes_gdf
 
     def _straight_geom(pu, pv):
         if pu is None or pv is None:

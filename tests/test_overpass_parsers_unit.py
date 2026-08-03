@@ -188,32 +188,35 @@ def test_parse_subway_stop_area_without_station_links_entrances_to_platform():
     assert set(zip(entrance_edges["u_ref"], entrance_edges["v_ref"])) == {(4, 2)}
 
 
-def test_overpass_subway2edgenode_marks_route_platforms_without_station_as_surface():
-    route_members = [
-        _member(301, "stop", 59.9100, 30.3102),
-        _member(302, "platform", 59.91007, 30.3102),
-        _member(303, "stop", 59.9100, 30.3140),
-        _member(304, "platform", 59.91007, 30.3140),
+def _route_members(*, platforms=True):
+    # Two stops along one way, each with a platform 8 m aside unless platforms are disabled.
+    members = [_member(301, "stop", 59.9100, 30.3102), _member(303, "stop", 59.9100, 30.3140)]
+    if platforms:
+        members += [_member(302, "platform", 59.91007, 30.3102), _member(304, "platform", 59.91007, 30.3140)]
+    members.append(
         {
             "type": "way",
             "ref": 305,
             "role": "",
             "geometry": [{"lat": 59.9100, "lon": 30.3095}, {"lat": 59.9100, "lon": 30.3145}],
-        },
-    ]
-    subway_data = pd.DataFrame(
-        [
-            _stop_area_row(10, _stop_area_members()),
-            {
-                "id": 20,
-                "tags": {"ref": "M1"},
-                "members": route_members,
-                "is_stop_area": False,
-                "is_stop_area_group": False,
-                "is_station": False,
-            },
-        ]
+        }
     )
+    return members
+
+
+def _route_row(route_id, members):
+    return {
+        "id": route_id,
+        "tags": {"ref": "M1"},
+        "members": members,
+        "is_stop_area": False,
+        "is_stop_area_group": False,
+        "is_station": False,
+    }
+
+
+def test_overpass_subway2edgenode_marks_route_platforms_without_station_as_surface():
+    subway_data = pd.DataFrame([_stop_area_row(10, _stop_area_members()), _route_row(20, _route_members())])
 
     _, nodes = overpass_subway2edgenode(subway_data, LOCAL_CRS)
     types = dict(zip(nodes["node_id"], nodes["type"]))
@@ -224,3 +227,27 @@ def test_overpass_subway2edgenode_marks_route_platforms_without_station_as_surfa
     # The stop-area platform is reachable through its station and stays underground.
     assert types[1] == "subway_station"
     assert types[2] == "subway_platform"
+
+
+def test_overpass_subway2edgenode_parses_routes_without_stop_areas():
+    # Territories where subway stop areas are not mapped produce no stop-area edges at all.
+    subway_data = pd.DataFrame([_route_row(20, _route_members())])
+
+    edges, nodes = overpass_subway2edgenode(subway_data, LOCAL_CRS)
+    types = dict(zip(nodes["node_id"], nodes["type"]))
+
+    assert types[301] == "subway"
+    assert types[302] == "platform"
+    assert {"boarding", "subway"} <= set(edges["type"])
+
+
+def test_overpass_subway2edgenode_builds_platforms_for_stops_without_platform_members():
+    # Stops without a platform are paired with a generated one, which reads the stop-area edges.
+    subway_data = pd.DataFrame([_route_row(20, _route_members(platforms=False))])
+
+    edges, nodes = overpass_subway2edgenode(subway_data, LOCAL_CRS)
+    types = dict(zip(nodes["node_id"], nodes["type"]))
+
+    assert types["from_301"] == "platform"
+    assert types["from_303"] == "platform"
+    assert ("301", "from_301") in {(str(u), str(v)) for u, v in zip(edges["u"], edges["v"])}

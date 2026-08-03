@@ -213,6 +213,28 @@ def test_join_pt_walk_graph_warns_which_pt_nodes_the_largest_component_drops():
     )
 
 
+def test_join_pt_walk_graph_when_every_pt_node_is_projected_and_no_pt_edges_remain():
+    # A lone platform with no public-transport edges: nothing is left for the PT side of the join.
+    walk_graph = _walk_line_graph()
+    pt_graph = UrbanGraph(
+        gpd.GeoDataFrame({"type": ["platform"]}, geometry=[Point(30.0, 2.0)], index=pd.Index([200]), crs=CRS),
+        gpd.GeoDataFrame(),
+        is_multigraph=True,
+        is_directed=True,
+        edge_direction_column="oneway",
+        crs=CRS,
+        graph_type="public_transport",
+    )
+
+    intermodal = join_pt_walk_graph(pt_graph, walk_graph, max_dist=10.0, keep_largest_subgraph=False)
+
+    assert intermodal.type == "intermodal"
+    platform_nodes = intermodal.nodes_gdf.index[intermodal.nodes_gdf["type"] == "platform"]
+    assert len(platform_nodes) == 1
+    edges = intermodal.edges_gdf
+    assert ((edges["u"] == platform_nodes[0]) | (edges["v"] == platform_nodes[0])).any()
+
+
 def test_join_pt_walk_graph_keeps_edge_keys_unique_when_pt_and_walk_share_node_pairs():
     # Two entrances lying on the same walk edge are linked to each other, so after projection the
     # same (u, v) pair carries both a walk edge and a public-transport edge.
