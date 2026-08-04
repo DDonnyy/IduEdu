@@ -37,6 +37,7 @@ def test_transport_spec_validate_name(spec):
         dict(name="bus", vmax_tech_kmh=10, accel_dist_m=1, brake_dist_m=-1, traffic_coef=1.0),
         dict(name="bus", vmax_tech_kmh=10, accel_dist_m=1, brake_dist_m=1, traffic_coef=0),
         dict(name="bus", vmax_tech_kmh=10, accel_dist_m=1, brake_dist_m=1, traffic_coef=2.0),
+        dict(name="bus", vmax_tech_kmh=10, accel_dist_m=1, brake_dist_m=1, traffic_coef=1.0, avg_wait_time_min=-1),
     ],
 )
 def test_transport_spec_validate_ranges(kwargs):
@@ -53,6 +54,17 @@ def test_transport_spec_validate_str():
     bad = TransportSpec(name="bus", vmax_tech_kmh="fast", accel_dist_m=10, brake_dist_m=10, traffic_coef=1.0)
     with pytest.raises(ValueError):
         bad.validate()
+
+    bad_wait = TransportSpec(
+        name="bus",
+        vmax_tech_kmh=50,
+        accel_dist_m=10,
+        brake_dist_m=10,
+        traffic_coef=1.0,
+        avg_wait_time_min="slow",
+    )
+    with pytest.raises(ValueError):
+        bad_wait.validate()
 
 
 def test_travel_time_zero_or_negative_length():
@@ -153,6 +165,14 @@ def test_registry_update_field():
     assert reg.get("bus").traffic_coef == 0.7
 
 
+def test_registry_update_wait_time():
+    reg = TransportRegistry()
+    reg.add(TransportSpec("bus", 60, 1, 1, 1.0))
+    updated = reg.update("bus", avg_wait_time_min=4.5)
+    assert updated.avg_wait_time_min == 4.5
+    assert reg.get("bus").avg_wait_time_min == 4.5
+
+
 def test_registry_update_rename_moves_key():
     reg = TransportRegistry()
     reg.add(TransportSpec("bus", 60, 1, 1, 1.0))
@@ -208,6 +228,14 @@ def test_default_registry_has_expected_keys():
     types = set(DEFAULT_REGISTRY.list_types())
     assert {"bus", "tram", "trolleybus", "subway"} <= types
     assert "train" not in types
+
+
+def test_default_registry_has_mode_specific_wait_times():
+    assert DEFAULT_REGISTRY.get("bus").avg_wait_time_min == 8.0
+    assert DEFAULT_REGISTRY.get("trolleybus").avg_wait_time_min == 8.0
+    assert DEFAULT_REGISTRY.get("tram").avg_wait_time_min == 6.0
+    assert DEFAULT_REGISTRY.get("subway").avg_wait_time_min == 2.0
+    assert DEFAULT_REGISTRY_W_TRAIN.get("train").avg_wait_time_min == 1.0
 
 
 def test_default_registry_with_train_has_expected_keys():

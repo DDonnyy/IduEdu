@@ -14,8 +14,9 @@
 </p>
 
 **IduEdu** is an open-source Python toolkit for building and analyzing multimodal city networks from
-OpenStreetMap data. It downloads OSM data via Overpass, builds drive, walk, public-transport and
-intermodal networks, and stores them as `UrbanGraph` objects backed by GeoDataFrame node and edge tables.
+OpenStreetMap and local GTFS Schedule data. It downloads OSM data via Overpass, reads GTFS feeds, builds
+drive, walk, public-transport and intermodal networks, and stores them as `UrbanGraph` objects backed by
+GeoDataFrame node and edge tables.
 
 ## Benchmark snapshot
 
@@ -52,6 +53,8 @@ Runnable examples are available for
 - Store graph topology, geometry, CRS and edge weights in `UrbanGraph`, a GeoDataFrame-native graph model.
 - Build drive and walk graphs from OpenStreetMap with local metric projection and optional simplification.
 - Build static public-transport graphs directly from OSM relations for bus, trolleybus, tram and subway.
+- Build static public-transport graphs from local GTFS Schedule directories or ZIP archives, using timetable
+  headways for boarding weights and shapes or straight-line fallbacks for route geometry.
 - Combine pedestrian and public-transport layers into one intermodal graph by projecting stops, platforms
   and station access points onto the walking network.
 - Compute shortest paths and OD matrices with Numba-backed CSR routines, cutoff thresholds and adaptive
@@ -93,6 +96,26 @@ print(graph.edges_gdf.head())
 Graph builders return `UrbanGraph`. Nodes are stored in `graph.nodes_gdf`; edges are stored in
 `graph.edges_gdf` and include `u`, `v`, `geometry`, `length_meter` and `time_min`.
 
+OSM-based boarding waits are mode-specific defaults stored in `TransportRegistry`. GTFS boarding waits are
+derived from the selected feed schedule instead.
+
+### Build a public-transport graph from GTFS
+
+```python
+from iduedu import get_gtfs_public_transport_graph
+
+pt_graph = get_gtfs_public_transport_graph(
+    "feed.zip",
+    service_date="2026-08-04",
+    start_time="07:00:00",
+    end_time="10:00:00",
+)
+```
+
+The source can be a GTFS directory or ZIP archive. See the
+[GTFS guide](https://iduclub.github.io/IduEdu/api/gtfs.html) for schedule aggregation, geometry fallbacks,
+single-departure handling and intermodal joining.
+
 ### Compute an OD matrix
 
 ```python
@@ -127,7 +150,8 @@ main_graph = subgraph_by_nodes(graph, component_nodes)
 
 Common entry points are available directly from `iduedu`:
 
-- Builders: `get_drive_graph`, `get_walk_graph`, `get_public_transport_graph`, `get_intermodal_graph`.
+- Builders: `get_drive_graph`, `get_walk_graph`, `get_public_transport_graph`,
+  `get_gtfs_public_transport_graph`, `get_intermodal_graph`.
 - Graph model: `UrbanGraph`, `UrbanGraphChanges`.
 - Editing and transforms: `clip_urban_graph`, `join_urban_graphs`, `project_objects2urban_graph`,
   `relabel_urban_graph`, `simplify_multiedges`, `to_directed`, `to_undirected`.

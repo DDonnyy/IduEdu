@@ -18,7 +18,7 @@ logger = config.logger
 # Node types that are projected onto the walk network.
 # Subway objects that have no surface access are already retyped to ``platform`` by the parsers,
 # see ``parse_overpass_subway_data`` and ``overpass_subway2edgenode`` in ``iduedu/overpass/parsers.py``.
-PLATFORM_NODE_TYPES = {"platform", "subway_entry_exit", "subway_entry", "subway_exit"}
+PLATFORM_NODE_TYPES = {"platform", "station_entry_exit", "subway_entry_exit", "subway_entry", "subway_exit"}
 DEFAULT_WALK_SPEED_M_PER_MIN = 5 * 1000 / 60
 
 

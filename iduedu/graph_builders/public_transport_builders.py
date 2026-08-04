@@ -61,7 +61,6 @@ def _graph_data_to_urban_graph(
     graph_edges_gdf: gpd.GeoDataFrame,
     transport_registry: TransportRegistry,
     local_crs,
-    avg_boarding_time_min: float,
 ) -> UrbanGraph:
     """
     Build a directed public-transport UrbanGraph from parser node/edge tables.
@@ -233,7 +232,12 @@ def _graph_data_to_urban_graph(
         boarding_edges[["u", "v"]] = boarding_edges[["v", "u"]].to_numpy()
         boarding_edges["geometry"] = boarding_edges.geometry.reverse()
         boarding_edges["length_meter"] = 0.0
-        boarding_edges["time_min"] = float(avg_boarding_time_min)
+        boarding_modes = boarding_edges["v"].map(nodes_gdf["type"])
+        if boarding_modes.isna().any():
+            raise ValueError("Cannot determine transport type for boarding edge")
+        boarding_edges["time_min"] = boarding_modes.map(
+            lambda mode: float(transport_registry.get(str(mode)).avg_wait_time_min)
+        )
         boarding_edges["oneway"] = True
 
         graph_edges_gdf = gpd.GeoDataFrame(
@@ -266,7 +270,6 @@ def _graph_data_to_urban_graph(
 
     free_pt_link_mask = graph_edges_gdf["type"].astype(str).isin({"boarding", "alighting"})
     graph_edges_gdf.loc[free_pt_link_mask, "length_meter"] = 0.0
-    graph_edges_gdf.loc[graph_edges_gdf["type"].astype(str).eq("boarding"), "time_min"] = float(avg_boarding_time_min)
     graph_edges_gdf.loc[graph_edges_gdf["type"].astype(str).eq("alighting"), "time_min"] = 0.0
 
     mask_missing = graph_edges_gdf["length_meter"].isna() | graph_edges_gdf["time_min"].isna()
@@ -318,7 +321,6 @@ def _build_public_transport_graph(
     osm_edge_tags: list[str] | None,
     transport_registry: TransportRegistry,
     clip_by_territory: bool = False,
-    avg_boarding_time_min: float = 1.0,
 ) -> UrbanGraph:
     """
     Build a directed public-transport graph for one or multiple OSM public-transport modes inside a territory.
@@ -346,10 +348,6 @@ def _build_public_transport_graph(
             distances, traffic coefficient). Also used for transport-type validation in public APIs.
         clip_by_territory:
             If True, clip the final graph to the (projected) boundary.
-        avg_boarding_time_min:
-            Time penalty for directed platform-to-stop ``boarding`` edges. Reverse stop-to-platform ``alighting``
-            edges are added with zero travel time.
-
     Returns:
         ``UrbanGraph``: Directed public-transport graph with ``oneway`` edge direction column.
     """
@@ -436,7 +434,7 @@ def _build_public_transport_graph(
     graph_nodes_gdf = pd.concat(graph_nodes_gdf, ignore_index=True) if graph_nodes_gdf else gpd.GeoDataFrame()
 
     urban_graph: UrbanGraph = _graph_data_to_urban_graph(
-        graph_nodes_gdf, graph_edges_gdf, transport_registry, local_crs, avg_boarding_time_min
+        graph_nodes_gdf, graph_edges_gdf, transport_registry, local_crs
     )
 
     if clip_by_territory:
@@ -454,7 +452,6 @@ def get_public_transport_graph(
     clip_by_territory: bool = False,
     osm_edge_tags: list[str] | None = None,
     transport_registry: TransportRegistry | None = None,
-    avg_boarding_time_min: float = 1.0,
 ) -> UrbanGraph:
     """
     Build a directed public-transport graph for one or multiple transport modes within a territory.
@@ -484,11 +481,9 @@ def get_public_transport_graph(
             Subset of OSM tags to retain on edges/nodes. If None, a default subset is used.
         transport_registry:
             Transport registry used to validate transport types and to compute per-edge travel times (via each mode's
-            parameters such as max speed, acceleration/braking distances, and traffic coefficient).
+            parameters such as max speed, acceleration/braking distances, traffic coefficient, and average waiting
+            time for boarding edges).
             If None, ``DEFAULT_REGISTRY`` is used.
-        avg_boarding_time_min:
-            Time penalty added to directed platform-to-stop boarding edges. Stop-to-platform alighting edges are added
-            with zero travel time. Default is 1 minute.
 
     Returns:
         Directed PT ``UrbanGraph`` with ``crs`` and ``type="public_transport"``.
@@ -497,9 +492,6 @@ def get_public_transport_graph(
         https://iduclub.github.io/IduEdu/examples/get_any_graph.html
         https://iduclub.github.io/IduEdu/examples/transport_registry.html
     """
-    if avg_boarding_time_min < 0:
-        raise ValueError(f"avg_boarding_time_min must be >= 0, got {avg_boarding_time_min}")
-
     registry = transport_registry or DEFAULT_REGISTRY
     registry_types = set(registry.list_types())
 
@@ -522,5 +514,4 @@ def get_public_transport_graph(
         osm_edge_tags=osm_edge_tags,
         transport_registry=registry,
         clip_by_territory=clip_by_territory,
-        avg_boarding_time_min=float(avg_boarding_time_min),
     )

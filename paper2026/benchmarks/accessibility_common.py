@@ -233,7 +233,13 @@ def _walk_graph_from_intermodal(intermodal):
 
 
 def load_or_build_graphs(zone: gpd.GeoDataFrame, *, smoke: bool) -> tuple[Any, Any, dict]:
-    from iduedu import get_intermodal_graph, read_urban_graph, write_urban_graph
+    from iduedu import (
+        DEFAULT_REGISTRY,
+        TransportRegistry,
+        get_intermodal_graph,
+        read_urban_graph,
+        write_urban_graph,
+    )
 
     ensure_directories()
     configure_network_cache()
@@ -272,13 +278,16 @@ def load_or_build_graphs(zone: gpd.GeoDataFrame, *, smoke: bool) -> tuple[Any, A
         print(f"[graph] loaded cached graphs ({graph_hash})", flush=True)
     else:
         print("[graph] building intermodal graph; .iduedu_cache is preserved")
+        paper_registry = TransportRegistry({mode: DEFAULT_REGISTRY.get(mode) for mode in DEFAULT_REGISTRY.list_types()})
+        for mode in paper_registry.list_types():
+            paper_registry.update(mode, avg_wait_time_min=1.0)
         m_build = measure(
             get_intermodal_graph,
             territory=zone.to_crs(4326).geometry.iloc[0],
             clip_by_territory=True,
             keep_largest_subgraph=True,
             walk_kwargs={"simplify": not smoke, "keep_largest_subgraph": False},
-            pt_kwargs={"avg_boarding_time_min": 1.0},
+            pt_kwargs={"transport_registry": paper_registry},
         )
         intermodal = m_build.result
         walk = _walk_graph_from_intermodal(intermodal)

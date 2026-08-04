@@ -23,6 +23,9 @@ class TransportSpec:
         traffic_coef (float):
             Traffic slowdown coefficient. Values below 1.0 reduce effective speed due to congestion,
             values close to 1.0 indicate free-flow or priority operation.
+        avg_wait_time_min (float):
+            Average passenger waiting time in minutes. It is assigned to directed
+            ``boarding`` edges built from OSM data.
 
     See also:
         https://iduclub.github.io/IduEdu/examples/transport_registry.html
@@ -33,6 +36,7 @@ class TransportSpec:
     accel_dist_m: float
     brake_dist_m: float
     traffic_coef: float = 1.0
+    avg_wait_time_min: float = 1.0
 
     def validate(self) -> None:
         """Validate transport specification fields.
@@ -44,7 +48,7 @@ class TransportSpec:
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("TransportSpec.name must be a non-empty string")
 
-        for field in ("vmax_tech_kmh", "accel_dist_m", "brake_dist_m", "traffic_coef"):
+        for field in ("vmax_tech_kmh", "accel_dist_m", "brake_dist_m", "traffic_coef", "avg_wait_time_min"):
             v = getattr(self, field)
             if v is None:
                 raise ValueError(f"{field} must not be None")
@@ -57,6 +61,8 @@ class TransportSpec:
             raise ValueError("accel_dist_m and brake_dist_m must be >= 0")
         if not (0 < self.traffic_coef <= 1.5):
             raise ValueError("traffic_coef must be in (0, 1.5]")
+        if self.avg_wait_time_min < 0:
+            raise ValueError("avg_wait_time_min must be >= 0")
 
     def travel_time_min(
         self,
@@ -252,12 +258,22 @@ class TransportRegistry:
 
 
 _DEFAULT_TRANSPORT_SPECS = {
-    "bus": TransportSpec("bus", vmax_tech_kmh=90, accel_dist_m=700, brake_dist_m=650, traffic_coef=0.7),
-    "trolleybus": TransportSpec("trolleybus", vmax_tech_kmh=70, accel_dist_m=750, brake_dist_m=700, traffic_coef=0.7),
-    "tram": TransportSpec("tram", vmax_tech_kmh=75, accel_dist_m=500, brake_dist_m=450, traffic_coef=0.8),
-    "subway": TransportSpec("subway", vmax_tech_kmh=80, accel_dist_m=450, brake_dist_m=450, traffic_coef=0.9),
+    "bus": TransportSpec(
+        "bus", vmax_tech_kmh=90, accel_dist_m=700, brake_dist_m=650, traffic_coef=0.7, avg_wait_time_min=8.0
+    ),
+    "trolleybus": TransportSpec(
+        "trolleybus", vmax_tech_kmh=70, accel_dist_m=750, brake_dist_m=700, traffic_coef=0.7, avg_wait_time_min=8.0
+    ),
+    "tram": TransportSpec(
+        "tram", vmax_tech_kmh=75, accel_dist_m=500, brake_dist_m=450, traffic_coef=0.8, avg_wait_time_min=6.0
+    ),
+    "subway": TransportSpec(
+        "subway", vmax_tech_kmh=80, accel_dist_m=450, brake_dist_m=450, traffic_coef=0.9, avg_wait_time_min=2.0
+    ),
 }
-_TRAIN_SPEC = TransportSpec("train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97)
+_TRAIN_SPEC = TransportSpec(
+    "train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97, avg_wait_time_min=1.0
+)
 
 DEFAULT_REGISTRY = TransportRegistry(_DEFAULT_TRANSPORT_SPECS)
 DEFAULT_REGISTRY_W_TRAIN = TransportRegistry({**_DEFAULT_TRANSPORT_SPECS, "train": _TRAIN_SPEC})

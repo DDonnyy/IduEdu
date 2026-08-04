@@ -8,12 +8,13 @@ Graph data model <api/graph_data_model>
 Migrating to UrbanGraph <migration_to_urban_graph>
 Benchmarks and design notes <benchmarks>
 Transport registry <api/transport_registry>
+GTFS public transport <api/gtfs>
 Graph utilities <api/utilities>
 Matrices <api/matrices>
 Overpass helpers <api/overpass>
 Examples <examples/index>
 ```
-# **IduEdu** is an open-source Python library for building and analyzing multimodal city networks from [OpenStreetMap](https://www.openstreetmap.org).
+# **IduEdu** is an open-source Python library for building and analyzing multimodal city networks from [OpenStreetMap](https://www.openstreetmap.org) and GTFS Schedule feeds.
 
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![PyPI version](https://img.shields.io/pypi/v/iduedu.svg)](https://pypi.org/project/iduedu/)
@@ -33,6 +34,8 @@ Examples <examples/index>
   local metric projection, travel-time weights and optional simplification.
 - **Public transport from OSM**: `get_public_transport_graph` builds static bus, tram, trolleybus and
   subway graphs directly from OSM route relations.
+- **Public transport from GTFS**: `get_gtfs_public_transport_graph` reads a local GTFS Schedule directory
+  or ZIP archive and builds a static graph with timetable-derived boarding waits.
 - **Intermodal graphs**: `get_intermodal_graph` combines public transport and walk networks by projecting
   stops, platforms and subway access points onto pedestrian edges.
 - **Matrices and shortest paths**: `od_matrix` and Dijkstra helpers use Numba-backed CSR kernels, cutoff
@@ -162,7 +165,7 @@ config.set_overpass_date()  # or config.set_overpass_date(None)
 
 ## Roadmap / Ideas
 
-- More PT modes and GTFS import
+- GTFS transfers and time-dependent timetable routing
 - Richer edge attributes (e.g., elevation, turn costs)
 
 > Contributions and ideas are welcome! Please open an issue or PR.
