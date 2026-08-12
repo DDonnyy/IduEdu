@@ -1,8 +1,9 @@
 from dataclasses import dataclass, replace
+from math import sqrt
 
 
 @dataclass(frozen=True, slots=True)
-class TransportSpec:
+class TransportSpec:  # pylint: disable=too-many-instance-attributes
     """
     Configuration of a single public-transport mode used to estimate travel time on graph edges.
 
@@ -21,8 +22,17 @@ class TransportSpec:
         brake_dist_m (float):
             Typical distance (meters) required to decelerate from cruising speed to standstill.
         traffic_coef (float):
-            Traffic slowdown coefficient. Values below 1.0 reduce effective speed due to congestion,
-            values close to 1.0 indicate free-flow or priority operation.
+            Share of the road speed limit the vehicle actually realizes on top of
+            ``base_speed_kmh``. Free-flow speed is affine in the limit:
+            ``v_free = min(vmax_tech_kmh, base_speed_kmh + traffic_coef * speed_limit)``.
+            Rail modes have a high coefficient (the tagged limit governs them), while
+            surface modes have a low one (they are governed by congestion and stops).
+        base_speed_kmh (float):
+            Speed the mode sustains regardless of the road limit, in kilometers per hour.
+            Defaults to ``0``, which reduces the affine model to the purely multiplicative
+            one and preserves the behavior of registries built before this field existed.
+        dwell_min (float):
+            Time lost standing at a stop, in minutes. Added once per segment. Defaults to ``0``.
         avg_wait_time_min (float):
             Average passenger waiting time in minutes. It is assigned to directed
             ``boarding`` edges built from OSM data.
@@ -37,6 +47,8 @@ class TransportSpec:
     brake_dist_m: float
     traffic_coef: float = 1.0
     avg_wait_time_min: float = 1.0
+    base_speed_kmh: float = 0.0
+    dwell_min: float = 0.0
 
     def validate(self) -> None:
         """Validate transport specification fields.
@@ -48,7 +60,15 @@ class TransportSpec:
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("TransportSpec.name must be a non-empty string")
 
-        for field in ("vmax_tech_kmh", "accel_dist_m", "brake_dist_m", "traffic_coef", "avg_wait_time_min"):
+        for field in (
+            "vmax_tech_kmh",
+            "accel_dist_m",
+            "brake_dist_m",
+            "traffic_coef",
+            "avg_wait_time_min",
+            "base_speed_kmh",
+            "dwell_min",
+        ):
             v = getattr(self, field)
             if v is None:
                 raise ValueError(f"{field} must not be None")
@@ -63,6 +83,10 @@ class TransportSpec:
             raise ValueError("traffic_coef must be in (0, 1.5]")
         if self.avg_wait_time_min < 0:
             raise ValueError("avg_wait_time_min must be >= 0")
+        if self.base_speed_kmh < 0:
+            raise ValueError("base_speed_kmh must be >= 0")
+        if self.dwell_min < 0:
+            raise ValueError("dwell_min must be >= 0")
 
     def travel_time_min(
         self,
@@ -76,13 +100,15 @@ class TransportSpec:
 
         The method estimates traversal time using a simplified kinematic model that accounts for:
         - the transport mode technical maximum speed;
-        - an optional road speed limit;
-        - traffic slowdown coefficient;
+        - an optional road speed limit, entering the free-flow speed affinely;
+        - time lost standing at a stop (``dwell_min``);
         - time lost on acceleration and braking.
 
         For short segments where the vehicle cannot reach cruising speed, a reduced peak speed
         is assumed and the segment is traversed using an acceleration-deceleration profile
-        without a cruising phase.
+        without a cruising phase. The peak speed scales as ``sqrt(L / span)`` because under
+        constant acceleration the distance covered grows with the square of the speed reached;
+        the two branches meet continuously at ``L == span``.
 
         Parameters:
             segment_len_m (float):
@@ -102,32 +128,31 @@ class TransportSpec:
         if segment_len_m <= 0:
             return 0.0
 
-        velocity = float(self.vmax_tech_kmh) * 1000.0 / 60.0
+        vmax = float(self.vmax_tech_kmh) * 1000.0 / 60.0
 
+        limit = vmax
         if speed_limit_mpm is not None and float(speed_limit_mpm) > 0:
-            velocity = min(velocity, float(speed_limit_mpm))
+            limit = min(vmax, float(speed_limit_mpm))
 
-        velocity *= float(self.traffic_coef)
+        velocity = float(self.base_speed_kmh) * 1000.0 / 60.0 + float(self.traffic_coef) * limit
+        velocity = min(velocity, vmax)
         velocity = max(velocity, float(min_speed_mpm))  # avoid zero speed
 
         d_acc = max(float(self.accel_dist_m), 0.0)
         d_brk = max(float(self.brake_dist_m), 0.0)
 
         span = d_acc + d_brk
+        dwell = float(self.dwell_min)
+
         if span > 1e-9 and segment_len_m < span:
-            V_peak = velocity * (segment_len_m / span)
-            V_peak = max(V_peak, float(min_speed_mpm))
+            v_peak = velocity * sqrt(segment_len_m / span)
+            v_peak = max(v_peak, float(min_speed_mpm))
 
-            return (2.0 * segment_len_m) / V_peak
+            return dwell + (2.0 * segment_len_m) / v_peak
 
-        d_cruise = max(segment_len_m - span, 0.0)
-
-        # time in minutes; acceleration/braking use average speed about V/2
-        t_acc = (2.0 * d_acc) / velocity
-        t_brk = (2.0 * d_brk) / velocity
-        t_cruise = d_cruise / velocity
-
-        return t_acc + t_brk + t_cruise
+        # acceleration and braking together cost the same as covering `span` twice,
+        # so the whole segment reduces to (L + span) / v
+        return dwell + (segment_len_m + span) / velocity
 
 
 class TransportRegistry:
@@ -257,22 +282,62 @@ class TransportRegistry:
         return list(self._specs.keys())
 
 
+# Speed parameters are fitted against observed GTFS run times: segments are matched to OSM
+# travel edges by both endpoints, which yields triples of (length, scheduled time, road limit).
+# Waiting times are harmonic means of boarding-edge times, taken per city and then aggregated
+# by the median across cities: within a city routing takes the minimum over available
+# departures, between cities no such minimum exists.
 _DEFAULT_TRANSPORT_SPECS = {
     "bus": TransportSpec(
-        "bus", vmax_tech_kmh=90, accel_dist_m=700, brake_dist_m=650, traffic_coef=0.7, avg_wait_time_min=8.0
+        "bus",
+        vmax_tech_kmh=90,
+        accel_dist_m=25.9,
+        brake_dist_m=24.1,
+        traffic_coef=0.375,
+        avg_wait_time_min=8.0,
+        base_speed_kmh=21.0,
+        dwell_min=0.4,
     ),
     "trolleybus": TransportSpec(
-        "trolleybus", vmax_tech_kmh=70, accel_dist_m=750, brake_dist_m=700, traffic_coef=0.7, avg_wait_time_min=8.0
+        "trolleybus",
+        vmax_tech_kmh=70,
+        accel_dist_m=25.9,
+        brake_dist_m=24.1,
+        traffic_coef=0.15,
+        avg_wait_time_min=10.0,
+        base_speed_kmh=18.0,
+        dwell_min=0.55,
     ),
     "tram": TransportSpec(
-        "tram", vmax_tech_kmh=75, accel_dist_m=500, brake_dist_m=450, traffic_coef=0.8, avg_wait_time_min=6.0
+        "tram",
+        vmax_tech_kmh=75,
+        accel_dist_m=52.6,
+        brake_dist_m=47.4,
+        traffic_coef=0.30,
+        avg_wait_time_min=5.0,
+        base_speed_kmh=26.0,
+        dwell_min=1.30,
     ),
     "subway": TransportSpec(
-        "subway", vmax_tech_kmh=80, accel_dist_m=450, brake_dist_m=450, traffic_coef=0.9, avg_wait_time_min=2.0
+        "subway",
+        vmax_tech_kmh=80,
+        accel_dist_m=25.0,
+        brake_dist_m=25.0,
+        traffic_coef=0.625,
+        avg_wait_time_min=3.0,
+        base_speed_kmh=1.5,
+        dwell_min=0.375,
     ),
 }
 _TRAIN_SPEC = TransportSpec(
-    "train", vmax_tech_kmh=140, accel_dist_m=600, brake_dist_m=450, traffic_coef=0.97, avg_wait_time_min=1.0
+    "train",
+    vmax_tech_kmh=140,
+    accel_dist_m=114.3,
+    brake_dist_m=85.7,
+    traffic_coef=0.675,
+    avg_wait_time_min=11.0,
+    base_speed_kmh=7.5,
+    dwell_min=1.05,
 )
 
 DEFAULT_REGISTRY = TransportRegistry(_DEFAULT_TRANSPORT_SPECS)
