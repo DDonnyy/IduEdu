@@ -19,7 +19,38 @@ from iduedu.gtfs.validation import GTFSValidationError, validate_gtfs_feed
 logger = config.logger
 
 DEFAULT_WALK_SPEED_M_PER_MIN = 5 * 1000 / 60
-GTFS_ROUTE_TYPES = {0: "tram", 1: "subway", 2: "train", 3: "bus", 11: "trolleybus", 12: "monorail"}
+GTFS_ROUTE_TYPES = {
+    0: "tram",
+    1: "subway",
+    2: "train",
+    3: "bus",
+    4: "ferry",
+    5: "cable_tram",
+    6: "aerial_lift",
+    7: "funicular",
+    11: "trolleybus",
+    12: "monorail",
+}
+
+# Hierarchical codes come from Google's Extended Route Types, which the GTFS reference itself
+# does not cover -- it documents 0-12 only. Ranges missing from that table (300, 500, 600, 1600
+# and 1700 "Miscellaneous") are deliberately left unmapped: a feed using them gets an honest
+# ``public_transport`` rather than a guess based on neighbouring codes.
+GTFS_EXTENDED_ROUTE_TYPES: tuple[tuple[int, int, str], ...] = (
+    (100, 117, "train"),
+    (200, 209, "coach"),  # intercity/long-distance, kept apart from city buses
+    (400, 404, "subway"),
+    (405, 405, "monorail"),
+    (406, 499, "subway"),
+    (700, 716, "bus"),
+    (800, 899, "trolleybus"),
+    (900, 906, "tram"),
+    (1000, 1000, "ferry"),
+    (1200, 1200, "ferry"),
+    (1300, 1300, "aerial_lift"),
+    (1400, 1400, "funicular"),
+    (1500, 1500, "taxi"),
+)
 
 
 def _parse_service_date(value: date | datetime | str | None) -> date | None:
@@ -118,14 +149,9 @@ def _transport_type(route_type: str, custom_type: str = "") -> str:
         return "public_transport"
     if numeric in GTFS_ROUTE_TYPES:
         return GTFS_ROUTE_TYPES[numeric]
-    if 100 <= numeric < 200:
-        return "train"
-    if 400 <= numeric < 500:
-        return "subway"
-    if 700 <= numeric < 800:
-        return "bus"
-    if 900 <= numeric < 1000:
-        return "tram"
+    for low, high, name in GTFS_EXTENDED_ROUTE_TYPES:
+        if low <= numeric <= high:
+            return name
     return "public_transport"
 
 
@@ -669,6 +695,35 @@ def _build_graph_tables(
                 pathway_mode=str(row["pathway_mode"]),
             )
             edge_records[-1]["oneway"] = str(row["is_bidirectional"]) != "1"
+
+    # Materialise the parent_station hierarchy. Feeds that describe a station down to boarding
+    # areas (location_type=4) route their pathways to those areas and never to the platforms
+    # that stop_times references, so the platforms -- and with them the whole metro component --
+    # end up disconnected from everything an intermodal join can project onto the walk layer.
+    # Linking a child to its parent closes the chain (entrance -> pathway -> boarding area ->
+    # station_link -> platform -> boarding) without projecting platforms directly, which would
+    # bypass the concourse the pathways exist to describe.
+    # These edges are free: the hierarchy states containment, and the feed gives no traversal
+    # time for it. Only already existing nodes are linked; no node is invented.
+    for stop_id, node_id in stop_to_node.items():
+        parent = str(node_records[node_id].get("parent_station", "") or "")
+        parent_node = stop_to_node.get(parent)
+        if not parent or parent_node is None or parent_node == node_id:
+            continue
+        child_point = node_records[node_id]["geometry"]
+        parent_point = node_records[parent_node]["geometry"]
+        link = LineString([child_point, parent_point])
+        add_edge(
+            node_id,
+            parent_node,
+            link,
+            "station_link",
+            link.length,
+            0.0,
+            gtfs_stop_id=str(stop_id),
+            parent_station=parent,
+        )
+        edge_records[-1]["oneway"] = False
 
     nodes = gpd.GeoDataFrame(node_records, geometry="geometry", crs=local_crs).set_index("node_id")
     if not edge_records:
