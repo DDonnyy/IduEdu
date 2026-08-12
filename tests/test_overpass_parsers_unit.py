@@ -3,6 +3,7 @@ import pytest
 
 from iduedu.overpass.parsers import (
     infer_role_from_tags,
+    overpass_ground_transport2edgenode,
     overpass_routes_to_df,
     overpass_subway2edgenode,
     parse_maxspeed_to_m_per_min,
@@ -251,3 +252,28 @@ def test_overpass_subway2edgenode_builds_platforms_for_stops_without_platform_me
     assert types["from_301"] == "platform"
     assert types["from_303"] == "platform"
     assert ("301", "from_301") in {(str(u), str(v)) for u, v in zip(edges["u"], edges["v"])}
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        pytest.param([], id="no_members"),
+        pytest.param([{"type": "node", "role": "stop", "lat": 34.26, "lon": -6.58}], id="member_without_ref"),
+    ],
+)
+def test_overpass_ground_transport2edgenode_survives_members_without_ref(members):
+    """A relation whose members carry no ``ref`` must yield nothing, not raise.
+
+    Such relations exist: OSM allows a route relation with no members at all.
+    One of them in Kenitra raised ``KeyError: 'ref'`` and left the city with no
+    graph, because the column every consumer indexes by name was never created.
+    """
+    route = pd.Series(
+        {"tags": {"ref": "12"}, "transport_type": "bus", "members": members},
+        name=99,
+    )
+
+    edges, nodes = overpass_ground_transport2edgenode(route, LOCAL_CRS, {}, [])
+
+    assert len(nodes) == 0
+    assert len(edges) == 0

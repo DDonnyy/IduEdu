@@ -23,6 +23,8 @@ from iduedu.overpass.parsers import (
 
 logger = config.logger
 
+DEFAULT_WALK_SPEED_M_PER_MIN = 5 * 1000 / 60
+
 
 def _merge_dicts_last(dicts):
     out = {}
@@ -232,11 +234,43 @@ def _graph_data_to_urban_graph(
         boarding_edges[["u", "v"]] = boarding_edges[["v", "u"]].to_numpy()
         boarding_edges["geometry"] = boarding_edges.geometry.reverse()
         boarding_edges["length_meter"] = 0.0
-        boarding_modes = boarding_edges["v"].map(nodes_gdf["type"])
-        if boarding_modes.isna().any():
-            raise ValueError("Cannot determine transport type for boarding edge")
+        # The waiting time belongs to the mode being boarded, and the node type is
+        # not a reliable name for it: in the subway branch a boarding edge ends at
+        # a platform, so the type reads "platform" or "subway_platform" and the
+        # registry lookup raised, taking every city with a metro down with it.
+        # The mode is therefore read from the travel edges the node participates
+        # in, which carry the mode by construction, and the node type is used only
+        # when it is itself a known mode.
+        known_modes = set(transport_registry.list_types())
+        travel = graph_edges_gdf[graph_edges_gdf["type"].astype(str).isin(known_modes)]
+        node_mode = pd.concat(
+            [
+                pd.Series(travel["type"].to_numpy(), index=travel["u"].to_numpy()),
+                pd.Series(travel["type"].to_numpy(), index=travel["v"].to_numpy()),
+            ]
+        )
+        node_mode = node_mode[~node_mode.index.duplicated(keep="first")]
+
+        boarding_modes = boarding_edges["v"].map(node_mode)
+        by_type = boarding_edges["v"].map(nodes_gdf["type"])
+        boarding_modes = boarding_modes.fillna(by_type.where(by_type.isin(known_modes)))
+
+        unresolved = boarding_modes.isna()
+        if unresolved.any():
+            # Dropping the edge is wrong -- the platform would become unreachable --
+            # so the boarding is kept with the registry's own fallback and reported.
+            logger.warning(
+                f"{int(unresolved.sum())} boarding edges have no resolvable transport mode; "
+                f"using the default waiting time"
+            )
+        default_wait = min(
+            (transport_registry.get(mode).avg_wait_time_min for mode in known_modes),
+            default=0.0,
+        )
         boarding_edges["time_min"] = boarding_modes.map(
-            lambda mode: float(transport_registry.get(str(mode)).avg_wait_time_min)
+            lambda mode: (
+                float(transport_registry.get(str(mode)).avg_wait_time_min) if isinstance(mode, str) else default_wait
+            )
         )
         boarding_edges["oneway"] = True
 
@@ -254,19 +288,24 @@ def _graph_data_to_urban_graph(
     graph_edges_gdf["oneway"] = graph_edges_gdf["oneway"].astype(bool)
 
     def calc_len_time(row):
-        """Calculate edge length and travel time for a public-transport edge."""
+        """Calculate edge length and travel time for a public-transport edge.
+
+        Only travel edges carry a transport mode as their type. Station interiors
+        (``subway_station``, ``subway_entrance``, ``subway_exit``) are walked, not
+        ridden, and asking the registry about them raised a ``KeyError`` that
+        aborted the whole graph.
+        """
         geom = row.geometry
         length_m = float(round(geom.length, 3))
-        spec = transport_registry.get(str(row.type))
-        speed_limit_mpm = row.speed_m_min
+        spec = transport_registry.try_get(str(row.type))
+        if spec is None:
+            return length_m, float(round(length_m / DEFAULT_WALK_SPEED_M_PER_MIN, 3))
 
         time_min = spec.travel_time_min(
             length_m,
-            speed_limit_mpm=speed_limit_mpm,
+            speed_limit_mpm=row.speed_m_min,
         )
-        time_min = float(round(time_min, 3))
-
-        return length_m, time_min
+        return length_m, float(round(time_min, 3))
 
     free_pt_link_mask = graph_edges_gdf["type"].astype(str).isin({"boarding", "alighting"})
     graph_edges_gdf.loc[free_pt_link_mask, "length_meter"] = 0.0

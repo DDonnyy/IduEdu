@@ -472,7 +472,11 @@ def overpass_ground_transport2edgenode(
     members = loc.get("members", [])
     route = pd.DataFrame(members) if isinstance(members, list) else pd.DataFrame()
 
-    for col in ("geometry", "lat", "lon", "role", "type"):
+    # ``ref`` belongs in this list: a relation whose members are absent or carry no
+    # ref produces a frame without the column, and every consumer below indexes it
+    # by name. One such relation used to raise KeyError and take the whole city
+    # with it -- Kenitra built no graph at all for want of a column of NaNs.
+    for col in ("geometry", "lat", "lon", "role", "type", "ref"):
         if col not in route.columns:
             route[col] = np.nan
 
