@@ -31,6 +31,7 @@ from bench_common import (
     measure,
     resolve_area_pbf,
 )
+from wide_paths import use_paper_cache
 
 OUT_CSV = RESULTS_DIR / "intermodal_benchmark.csv"
 KEY_COLUMNS = ["area", "attempt"]
@@ -102,6 +103,7 @@ def main() -> None:
     parser.add_argument("--areas", default=None)
     args = parser.parse_args()
 
+    use_paper_cache()  # one Overpass cache for the paper; see bench_build
     dump_environment("intermodal")
     existing = load_existing_keys(OUT_CSV, KEY_COLUMNS)
     if existing:

@@ -21,16 +21,22 @@ class TransportSpec:  # pylint: disable=too-many-instance-attributes
             Typical distance (meters) required to accelerate from standstill to cruising speed.
         brake_dist_m (float):
             Typical distance (meters) required to decelerate from cruising speed to standstill.
-        traffic_coef (float):
-            Share of the road speed limit the vehicle actually realizes on top of
-            ``base_speed_kmh``. Free-flow speed is affine in the limit:
-            ``v_free = min(vmax_tech_kmh, base_speed_kmh + traffic_coef * speed_limit)``.
-            Rail modes have a high coefficient (the tagged limit governs them), while
-            surface modes have a low one (they are governed by congestion and stops).
         base_speed_kmh (float):
-            Speed the mode sustains regardless of the road limit, in kilometers per hour.
-            Defaults to ``0``, which reduces the affine model to the purely multiplicative
-            one and preserves the behavior of registries built before this field existed.
+            Free-flow speed of the mode in kilometers per hour: the speed it holds
+            between stops once it is up to speed.
+
+            A road speed limit does **not** scale this value. Earlier versions made
+            free speed affine in the limit, ``base + traffic_coef * limit``, and
+            fitting that form against published timetables showed the two terms are
+            not separately identifiable: for buses, a fast base with a weak
+            coefficient and a slow base with a strong one differ by less than a
+            percent in error. Dropping the term outright improved accuracy for
+            every mode measured (bus, tram, trolleybus, subway, commuter rail),
+            because OSM's ``maxspeed`` describes what a car may do, not what a bus
+            with passengers, stops and traffic actually does.
+
+            The limit is still honoured where it binds: a vehicle is not modelled
+            faster than the road allows.
         dwell_min (float):
             Time lost standing at a stop, in minutes. Added once per segment. Defaults to ``0``.
         avg_wait_time_min (float):
@@ -45,9 +51,8 @@ class TransportSpec:  # pylint: disable=too-many-instance-attributes
     vmax_tech_kmh: float
     accel_dist_m: float
     brake_dist_m: float
-    traffic_coef: float = 1.0
+    base_speed_kmh: float
     avg_wait_time_min: float = 1.0
-    base_speed_kmh: float = 0.0
     dwell_min: float = 0.0
 
     def validate(self) -> None:
@@ -64,7 +69,6 @@ class TransportSpec:  # pylint: disable=too-many-instance-attributes
             "vmax_tech_kmh",
             "accel_dist_m",
             "brake_dist_m",
-            "traffic_coef",
             "avg_wait_time_min",
             "base_speed_kmh",
             "dwell_min",
@@ -79,12 +83,10 @@ class TransportSpec:  # pylint: disable=too-many-instance-attributes
             raise ValueError("vmax_tech_kmh must be > 0")
         if self.accel_dist_m < 0 or self.brake_dist_m < 0:
             raise ValueError("accel_dist_m and brake_dist_m must be >= 0")
-        if not (0 < self.traffic_coef <= 1.5):
-            raise ValueError("traffic_coef must be in (0, 1.5]")
         if self.avg_wait_time_min < 0:
             raise ValueError("avg_wait_time_min must be >= 0")
-        if self.base_speed_kmh < 0:
-            raise ValueError("base_speed_kmh must be >= 0")
+        if self.base_speed_kmh <= 0:
+            raise ValueError("base_speed_kmh must be > 0")
         if self.dwell_min < 0:
             raise ValueError("dwell_min must be >= 0")
 
@@ -130,12 +132,12 @@ class TransportSpec:  # pylint: disable=too-many-instance-attributes
 
         vmax = float(self.vmax_tech_kmh) * 1000.0 / 60.0
 
-        limit = vmax
+        # Free speed is a property of the mode, not of the road: see ``base_speed_kmh``.
+        # A posted limit only matters where it is *below* what the mode would do
+        # anyway, which is rare on transit routes and never on rail.
+        velocity = min(float(self.base_speed_kmh) * 1000.0 / 60.0, vmax)
         if speed_limit_mpm is not None and float(speed_limit_mpm) > 0:
-            limit = min(vmax, float(speed_limit_mpm))
-
-        velocity = float(self.base_speed_kmh) * 1000.0 / 60.0 + float(self.traffic_coef) * limit
-        velocity = min(velocity, vmax)
+            velocity = min(velocity, float(speed_limit_mpm))
         velocity = max(velocity, float(min_speed_mpm))  # avoid zero speed
 
         d_acc = max(float(self.accel_dist_m), 0.0)
@@ -272,7 +274,7 @@ class TransportRegistry:
                 vmax_tech_kmh=25.0,
                 accel_dist_m=500.0,
                 brake_dist_m=500.0,
-                traffic_coef=0.8,
+                base_speed_kmh=20.0,
             )
         self.add(defaults, overwrite=False)
         return self._specs[key]
@@ -287,46 +289,111 @@ class TransportRegistry:
 # Waiting times are harmonic means of boarding-edge times, taken per city and then aggregated
 # by the median across cities: within a city routing takes the minimum over available
 # departures, between cities no such minimum exists.
+#: OpenStreetMap tags some services under names the registry does not use, and a
+#: request for ``tram`` must find them or the mode goes missing from the graph.
+#: The mapping follows GTFS, which codes light rail and tram as one type (0) and
+#: keeps monorail (12, 405) and shared taxi (1501) apart from their relatives.
+#:
+#: Measured over 126 cities: 14 hold ``light_rail`` routes, 9 hold ``share_taxi``
+#: -- among them Moscow, Saint Petersburg, Kampala and Jakarta, whose informal
+#: networks were invisible before this -- and 8 hold ``monorail``.
+OSM_ROUTE_ALIASES: dict[str, str] = {
+    "light_rail": "tram",
+    "monorail": "monorail",
+    "share_taxi": "taxi",
+}
+
+
+def osm_route_values(transport_type: str) -> list[str]:
+    """Every ``route`` tag value that stands for this transport type in OSM."""
+    values = [transport_type]
+    values.extend(
+        tag for tag, canonical in OSM_ROUTE_ALIASES.items() if canonical == transport_type and tag != transport_type
+    )
+    return sorted(set(values))
+
+
+def canonical_transport_type(osm_route_value: str) -> str:
+    """The registry's name for an OSM ``route`` tag value."""
+    return OSM_ROUTE_ALIASES.get(osm_route_value, osm_route_value)
+
+
 _DEFAULT_TRANSPORT_SPECS = {
+    # Refitted on 43 surveyed feeds (675k matched segments). The change was adopted
+    # because it survives leave-one-city-out: scored on a city held out of the fit
+    # the refit gives 0.270, below the 0.272 the previous constants score on the
+    # cities they were fitted to. The bus is the only mode where the gain transfers;
+    # every other mode keeps its constants, whose refits do not.
     "bus": TransportSpec(
         "bus",
         vmax_tech_kmh=90,
         accel_dist_m=25.9,
         brake_dist_m=24.1,
-        traffic_coef=0.375,
-        avg_wait_time_min=8.0,
-        base_speed_kmh=21.0,
-        dwell_min=0.4,
+        avg_wait_time_min=8.2,
+        base_speed_kmh=41.0,
+        dwell_min=0.475,
     ),
     "trolleybus": TransportSpec(
         "trolleybus",
         vmax_tech_kmh=70,
         accel_dist_m=25.9,
         brake_dist_m=24.1,
-        traffic_coef=0.15,
-        avg_wait_time_min=10.0,
-        base_speed_kmh=18.0,
-        dwell_min=0.55,
+        avg_wait_time_min=5.92,
+        base_speed_kmh=20.0,
+        dwell_min=0.325,
     ),
     "tram": TransportSpec(
         "tram",
         vmax_tech_kmh=75,
         accel_dist_m=52.6,
         brake_dist_m=47.4,
-        traffic_coef=0.30,
-        avg_wait_time_min=5.0,
-        base_speed_kmh=26.0,
-        dwell_min=1.30,
+        avg_wait_time_min=4.95,
+        base_speed_kmh=41.5,
+        dwell_min=1.2,
     ),
     "subway": TransportSpec(
         "subway",
         vmax_tech_kmh=80,
         accel_dist_m=25.0,
         brake_dist_m=25.0,
-        traffic_coef=0.625,
+        avg_wait_time_min=3.02,
+        base_speed_kmh=49.0,
+        dwell_min=0.35,
+    ),
+    # Waiting constants are medians across cities of the harmonic-mean wait
+    # measured on graphs built from the cities' own timetables, over regular
+    # services only -- those whose headway does not exceed an hour: bus 8.2
+    # minutes over 115 cities, trolleybus 5.92 over 4, tram 4.95 over 17, subway
+    # 3.02 over 12, commuter rail 7.71 over 15. Without that restriction the bus
+    # comes out at 10.3, inflated by the sparse services it alone runs; the tram
+    # and trolleybus barely move, having few irregular services to exclude. The
+    # trolleybus rests on four cities and should be read as describing them.
+    #
+    # The two below are **inherited, not fitted**: no city in the calibration
+    # sample publishes a schedule for them, so there are no observed run times to
+    # fit against. Monorail borrows the subway's profile, being grade-separated
+    # and stopping on the same scale; a shared taxi borrows the bus's, running the
+    # same streets with the same stops. They are declared so that OSM's monorail
+    # and share-taxi routes enter a graph at all -- with a plausible speed rather
+    # than none -- and any result that leans on them has to say where the numbers
+    # came from.
+    "monorail": TransportSpec(
+        "monorail",
+        vmax_tech_kmh=80,
+        accel_dist_m=25.0,
+        brake_dist_m=25.0,
         avg_wait_time_min=3.0,
-        base_speed_kmh=1.5,
-        dwell_min=0.375,
+        base_speed_kmh=49.0,
+        dwell_min=0.35,
+    ),
+    "taxi": TransportSpec(
+        "taxi",
+        vmax_tech_kmh=90,
+        accel_dist_m=25.9,
+        brake_dist_m=24.1,
+        avg_wait_time_min=8.0,
+        base_speed_kmh=41.0,
+        dwell_min=0.475,
     ),
 }
 _TRAIN_SPEC = TransportSpec(
@@ -334,10 +401,9 @@ _TRAIN_SPEC = TransportSpec(
     vmax_tech_kmh=140,
     accel_dist_m=114.3,
     brake_dist_m=85.7,
-    traffic_coef=0.675,
-    avg_wait_time_min=11.0,
-    base_speed_kmh=7.5,
-    dwell_min=1.05,
+    avg_wait_time_min=7.71,
+    base_speed_kmh=50.5,
+    dwell_min=0.375,
 )
 
 DEFAULT_REGISTRY = TransportRegistry(_DEFAULT_TRANSPORT_SPECS)

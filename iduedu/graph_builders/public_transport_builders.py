@@ -425,7 +425,12 @@ def _build_public_transport_graph(
     graph_edges_gdf = []
     graph_nodes_gdf = []
 
-    ground_types = {"bus", "tram", "trolleybus", "train"} & set(transport_types)
+    # Everything except the subway is parsed the same way, from a route relation and
+    # its stops; the subway is special only because OSM describes it with stop areas,
+    # entrances and interchanges. Listing the ground modes by hand meant a mode the
+    # registry knew about was silently discarded here after being downloaded: taxi
+    # and monorail routes arrived from Overpass and never reached a graph.
+    ground_types = set(transport_types) - {"subway"}
     ground_pt_data = overpass_data[
         (overpass_data["transport_type"].isin(ground_types)) & (~overpass_data["is_way_data"])
     ].copy()

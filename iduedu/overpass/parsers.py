@@ -14,6 +14,7 @@ from shapely.ops import substring
 
 from iduedu import config
 from iduedu.constants.highway_enums import HighwayType
+from iduedu.constants.transport_specs import canonical_transport_type
 from iduedu.overpass.downloaders import fetch_member_tags
 
 logger = config.logger
@@ -98,8 +99,12 @@ def overpass_routes_to_df(json_routes: list[dict], enable_subway_details: bool) 
         tags = e.get("tags") or {}
         etype = e.get("type")
 
+        # The tag is normalised to the registry's vocabulary here, once, so nothing
+        # downstream has to know that OSM calls a tram "light_rail" in some cities.
+        # The original value stays available for anyone who needs to tell them apart.
         route_type = tags.get("route")
-        e["transport_type"] = route_type
+        e["osm_route_value"] = route_type
+        e["transport_type"] = canonical_transport_type(route_type) if route_type else route_type
 
         if etype == "way" and "highway" in tags:
             e["is_way_data"] = True

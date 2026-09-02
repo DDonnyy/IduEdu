@@ -44,6 +44,7 @@ from .graph_builders.drive_walk_builders import get_drive_graph, get_walk_graph
 from .graph_builders.gtfs_builders import get_gtfs_public_transport_graph
 from .graph_builders.intermodal_builders import get_intermodal_graph, join_pt_walk_graph
 from .graph_builders.public_transport_builders import get_public_transport_graph
+from .gtfs.merge import merge_gtfs_feeds
 from .overpass.downloaders import get_4326_boundary
 
 

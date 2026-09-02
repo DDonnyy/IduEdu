@@ -59,7 +59,8 @@ A single transport mode is described by :class:`iduedu.TransportSpec`.
         vmax_tech_kmh=90,
         accel_dist_m=220,
         brake_dist_m=140,
-        traffic_coef=0.75,
+        base_speed_kmh=37.0,
+        dwell_min=0.45,
         avg_wait_time_min=8.0,
     )
 
@@ -69,7 +70,12 @@ The parameters have the following meaning:
 - ``vmax_tech_kmh`` – technical maximum speed in kilometers per hour;
 - ``accel_dist_m`` – typical distance required to accelerate to cruising speed (meters);
 - ``brake_dist_m`` – typical distance required to decelerate from cruising speed (meters);
-- ``traffic_coef`` – traffic slowdown coefficient (values below 1.0 reduce effective speed).
+- ``base_speed_kmh`` – free-flow speed of the mode between stops. A posted road limit
+  does **not** scale it; the limit is honoured only where it is lower, so a motorway
+  does not make a bus faster. Fitting free speed as ``base + coef * limit`` against
+  published timetables showed the two terms are not separately identifiable, and
+  dropping the limit term improved accuracy for every mode measured;
+- ``dwell_min`` – time lost standing at a stop, added once per segment;
 - ``avg_wait_time_min`` – average waiting time assigned to boarding edges in OSM-based graphs.
 
 Creating a custom registry
@@ -89,7 +95,7 @@ You can create your own registry and fully control how travel time is computed.
             vmax_tech_kmh=80,
             accel_dist_m=200,
             brake_dist_m=120,
-            traffic_coef=0.7,
+            base_speed_kmh=34.0,
             avg_wait_time_min=8.0,
         )
     )
@@ -100,7 +106,7 @@ You can create your own registry and fully control how travel time is computed.
             vmax_tech_kmh=70,
             accel_dist_m=180,
             brake_dist_m=110,
-            traffic_coef=0.85,
+            base_speed_kmh=40.0,
             avg_wait_time_min=6.0,
         )
     )
@@ -114,7 +120,7 @@ Existing transport specifications can be updated:
 
 .. code-block:: python
 
-    registry.update("bus", traffic_coef=0.6)
+    registry.update("bus", base_speed_kmh=32.0)
     registry.update("tram", vmax_tech_kmh=75)
     registry.update("bus", avg_wait_time_min=5.0)
 

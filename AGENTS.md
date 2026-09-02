@@ -152,7 +152,7 @@ UrbanGraph layers
 ### Public transport speed model
 
 `TransportSpec` (frozen dataclass) encodes per-mode physics and OSM boarding waits: `vmax_tech_kmh`, `accel_dist_m`,
-`brake_dist_m`, `traffic_coef`, `avg_wait_time_min`. `DEFAULT_REGISTRY` covers bus/tram/trolleybus/subway;
+`brake_dist_m`, `base_speed_kmh`, `dwell_min`, `avg_wait_time_min`. `DEFAULT_REGISTRY` covers bus/tram/trolleybus/subway;
 `DEFAULT_REGISTRY_W_TRAIN` adds train. Pass a custom `TransportRegistry` to `get_public_transport_graph()` to
 override speeds or waiting times. GTFS boarding waits are schedule-derived and do not use the registry.
 

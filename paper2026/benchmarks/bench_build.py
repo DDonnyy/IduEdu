@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-B1 — Graph construction benchmark: IduEdu vs OSMnx vs Pyrosm.
+B1 — Graph construction benchmark: IduEdu vs OSMnx vs Pyrosm vs cityseer.
 
 Measures wall time, node/edge counts, and resulting in-memory graph
 representation size for walk and drive graphs over the same AOI (bbox from the
-PBF header), with the simplify on/off ablation for IduEdu and OSMnx (pyrosm has
-no comparable switch).
+PBF header), with the simplify on/off ablation for IduEdu, OSMnx and cityseer
+(pyrosm has no comparable switch).
+
+The four are not interchangeable and the table should not pretend they are:
+IduEdu, OSMnx and cityseer fetch from Overpass while pyrosm reads a local PBF,
+and cityseer builds pedestrian networks only, so it is charged on walk alone.
 
 One CSV row per attempt; resume-safe. Overpass responses are cached by both
 IduEdu and OSMnx after the first (warm-up) call, so measured times reflect
@@ -36,6 +40,7 @@ from bench_common import (
     resolve_area_pbf,
     urban_graph_memory_mb,
 )
+from wide_paths import use_paper_cache
 
 OUT_CSV = RESULTS_DIR / "build_benchmark.csv"
 KEY_COLUMNS = ["library", "area", "network", "simplify", "attempt"]
@@ -148,6 +153,29 @@ def build_osmnx(polygon, network: str, simplify: bool):
     return graph.number_of_nodes(), graph.number_of_edges(), graph
 
 
+def build_cityseer(polygon, network: str, simplify: bool):
+    """Pedestrian networks only, which is what the library is for.
+
+    cityseer fetches from Overpass like IduEdu and OSMnx, so the three are directly
+    comparable. It has no driving mode: its request keeps cycleways and drops
+    busways by default because it exists for pedestrian morphology, and running it
+    over a drive network would report a tool doing something it does not claim.
+    """
+    from cityseer.tools import io
+
+    graph = io.osm_graph_from_poly(polygon, poly_crs_code=4326, simplify=simplify)
+    return graph.number_of_nodes(), graph.number_of_edges(), graph
+
+
+def cityseer_available() -> bool:
+    try:
+        import cityseer  # noqa: F401
+
+        return True
+    except Exception:  # noqa: BLE001 - an optional competitor must not end the run
+        return False
+
+
 def build_pyrosm(pbf_path: str, network: str):
     from pyrosm import OSM
 
@@ -228,6 +256,12 @@ def main() -> None:
     parser.add_argument("--networks", default=",".join(NETWORKS))
     args = parser.parse_args()
 
+    # Without this the library falls back to a cache path relative to the working
+    # directory, so the benchmarks quietly built their own 1.7 GB store inside
+    # ``benchmarks/`` while the study's cache went unused. Sharing one cache also
+    # keeps the comparison honest: IduEdu and OSMnx both read Overpass through it.
+    use_paper_cache()
+
     dump_environment("build")
     existing = load_existing_build_keys(OUT_CSV)
     if existing:
@@ -248,6 +282,9 @@ def main() -> None:
 
     areas = [a.strip() for a in args.areas.split(",")] if args.areas else AREAS
     has_pyrosm = pyrosm_available()
+    has_cityseer = cityseer_available()
+    if not has_cityseer:
+        print("[warn] cityseer not importable in this environment; its walk rows will be missing")
     if not has_pyrosm:
         print("[warn] pyrosm not importable in this environment; run its rows from a conda env later")
 
@@ -258,7 +295,12 @@ def main() -> None:
         osm_pending = {n: has_pending(existing, "osmnx", area, n, SIMPLIFY_SETTINGS) for n in networks}
         pyr_pending = {n: has_pyrosm and has_pending(existing, "pyrosm", area, n, [None]) for n in networks}
 
-        if not any({**idu_pending, **osm_pending, **pyr_pending}.values()):
+        # Merging these with ** collapses them by key -- all three are keyed by
+        # network name -- so only pyrosm survived the merge. With pyrosm absent or
+        # already recorded, every area reported "already recorded" and skipped the
+        # iduedu and OSMnx arms entirely, in zero seconds, over a file that did not
+        # exist. Chain the values instead of merging the dicts.
+        if not any(list(idu_pending.values()) + list(osm_pending.values()) + list(pyr_pending.values())):
             print(f"\n=== {area}: all measurements already recorded, skipping ===")
             continue
 

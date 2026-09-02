@@ -1,7 +1,7 @@
 from datetime import date, datetime, time
 from math import sqrt
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import geopandas as gpd
 import numpy as np
@@ -13,6 +13,7 @@ from shapely.ops import substring
 from iduedu import config
 from iduedu.graph.transformers import estimate_crs_for_bounds
 from iduedu.graph.urban_graph import UrbanGraph
+from iduedu.gtfs.merge import merge_gtfs_feeds
 from iduedu.gtfs.reader import GTFSFeed, read_gtfs_feed
 from iduedu.gtfs.validation import GTFSValidationError, validate_gtfs_feed
 
@@ -755,8 +756,22 @@ def _build_graph_tables(
     )
 
 
+def _resolve_feed(feed: Any) -> GTFSFeed:
+    """Accept one feed or several, and return the tables to build from."""
+    if isinstance(feed, GTFSFeed):
+        return feed
+    if isinstance(feed, (str, Path)):
+        return read_gtfs_feed(feed)
+    sources = list(feed)
+    if not sources:
+        raise ValueError("no GTFS sources given")
+    if len(sources) == 1:
+        return _resolve_feed(sources[0])
+    return merge_gtfs_feeds(sources)
+
+
 def get_gtfs_public_transport_graph(
-    feed: str | Path,
+    feed: str | Path | GTFSFeed | Sequence[str | Path | GTFSFeed],
     *,
     service_date: date | datetime | str | None = None,
     start_time: time | str | int | float | None = None,
@@ -777,7 +792,11 @@ def get_gtfs_public_transport_graph(
     all-service graph, not the timetable for a particular real-world day.
 
     Args:
-        feed: Directory containing GTFS text files, or a GTFS ZIP archive.
+        feed: Directory containing GTFS text files, a GTFS ZIP archive, an
+            already-read :class:`GTFSFeed`, or a sequence of any of those. A
+            sequence is merged with :func:`iduedu.merge_gtfs_feeds` first, which
+            qualifies identifiers by source; pass the merged feed yourself when
+            you need to control prefixes or fuse stops across feeds.
         service_date: Optional service date used with ``calendar.txt`` and
             ``calendar_dates.txt``. Accepts ``date``, ``YYYY-MM-DD`` or
             ``YYYYMMDD``.
@@ -799,7 +818,7 @@ def get_gtfs_public_transport_graph(
     parsed_date = _parse_service_date(service_date)
     parsed_start = _parse_time_bound(start_time, "start_time")
     parsed_end = _parse_time_bound(end_time, "end_time")
-    source = read_gtfs_feed(feed)
+    source = _resolve_feed(feed)
     validate_gtfs_feed(source)
     trips = _prepare_trips(source, parsed_date)
     if trips.empty:
