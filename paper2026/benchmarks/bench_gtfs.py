@@ -31,8 +31,6 @@ Usage:
     python bench_gtfs.py --no-join            # transit layer only, skip the walk join
 """
 
-from __future__ import annotations
-
 import argparse
 import time
 from pathlib import Path
@@ -48,7 +46,21 @@ from bench_common import (
     networkx_graph_memory_mb,
     urban_graph_memory_mb,
 )
-from wide_paths import BENCH_FEED_DIR, use_paper_cache
+
+try:
+    from wide_paths import BENCH_FEED_DIR, use_paper_cache
+except ImportError:  # pragma: no cover - the peartree arm runs without IduEdu
+    # peartree 0.6.4 needs pandas 1.x (it calls Series.iteritems and reads the
+    # grouping column inside groupby.apply, both gone since pandas 2.0), while
+    # IduEdu requires pandas >= 3. The two cannot be installed together, so the
+    # competitor arm is run from its own interpreter with --only-peartree, and
+    # this module must import there -- where wide_paths, which imports IduEdu at
+    # module level, does not.
+    BENCH_FEED_DIR = Path(__file__).resolve().parents[1] / "bench_feeds"
+
+    def use_paper_cache() -> None:
+        """No Overpass traffic in the peartree arm: it never builds a walk layer."""
+
 
 OUT_CSV = RESULTS_DIR / "gtfs_benchmark.csv"
 KEY_COLUMNS = ["area", "library", "attempt"]
@@ -79,16 +91,18 @@ CITY_FEEDS: dict[str, str | list[str]] = {
     # New York publishes nine archives and no merged one. Listed here rather than
     # pre-merged so the run exercises the library's own merge; identifiers collide
     # across all nine (every feed numbers a route "1"), which is what it is for.
+    # Kept under the MTA's own file names, so an archive can be traced back to the
+    # page it was downloaded from without a rename table.
     "New York": [
-        "nyct_subway.zip",
-        "nyct_bus_bronx.zip",
-        "nyct_bus_brooklyn.zip",
-        "nyct_bus_manhattan.zip",
-        "nyct_bus_queens.zip",
-        "nyct_bus_staten_island.zip",
-        "mta_bus_company.zip",
-        "lirr.zip",
-        "mnr.zip",
+        "nyc_feeds/gtfs_subway.zip",  # NYCT subway
+        "nyc_feeds/gtfs_bx.zip",  # NYCT bus, Bronx
+        "nyc_feeds/gtfs_b.zip",  # NYCT bus, Brooklyn
+        "nyc_feeds/gtfs_m.zip",  # NYCT bus, Manhattan
+        "nyc_feeds/gtfs_q.zip",  # NYCT bus, Queens
+        "nyc_feeds/gtfs_si.zip",  # NYCT bus, Staten Island
+        "nyc_feeds/gtfs_busco.zip",  # MTA Bus Company
+        "nyc_feeds/gtfslirr.zip",  # Long Island Rail Road
+        "nyc_feeds/gtfsmnr.zip",  # Metro-North Railroad
     ],
 }
 
@@ -253,7 +267,11 @@ def run_peartree(existing: set, area: str, feeds: list[Path], window: tuple[str,
             # itself worth recording rather than working around.
             if len(feeds) > 1:
                 raise NotImplementedError(f"peartree cannot merge {len(feeds)} feeds")
-            feed_obj = pt.get_representative_feed(str(feeds[0]))
+            # Reading the archive is charged to both arms: IduEdu's builder is
+            # handed paths and reads them inside the measured call, so timing
+            # peartree from an already-parsed feed would compare unlike work.
+            m_read = measure(pt.get_representative_feed, str(feeds[0]))
+            feed_obj = m_read.result
             m = measure(pt.load_feed_as_graph, feed_obj, start_s, end_s)
         except Exception as exc:
             print(f"  [warn] {area}: peartree failed: {exc!r}")
@@ -279,7 +297,9 @@ def run_peartree(existing: set, area: str, feeds: list[Path], window: tuple[str,
                 attempt=attempt,
                 window=f"{window[0]}-{window[1]}",
                 status="ok",
-                time_pt_sec=round(m.time_sec, 3),
+                time_pt_sec=round(m_read.time_sec + m.time_sec, 3),
+                time_read_sec=round(m_read.time_sec, 3),
+                time_build_sec=round(m.time_sec, 3),
                 # peartree builds no pedestrian layer, so there is nothing to join.
                 time_join_sec="",
                 n_nodes_pt=graph.number_of_nodes(),
@@ -299,12 +319,17 @@ def main() -> None:
     parser.add_argument("--window", default=DEFAULT_WINDOW, help=f"departure window, default {DEFAULT_WINDOW}")
     parser.add_argument("--no-join", dest="join", action="store_false", help="skip the pedestrian join")
     parser.add_argument("--no-peartree", dest="peartree", action="store_false", help="skip the competitor arm")
+    parser.add_argument(
+        "--only-peartree",
+        action="store_true",
+        help="competitor arm only; run this from the pandas-1.x environment peartree needs",
+    )
     args = parser.parse_args()
 
     window = parse_window(args.window)
 
     use_paper_cache()  # one Overpass cache for the paper; the walk join fetches through it
-    dump_environment("gtfs")
+    dump_environment("gtfs_peartree" if args.only_peartree else "gtfs")
     existing = load_existing_keys(OUT_CSV, KEY_COLUMNS)
     if existing:
         print(f"[resume] {len(existing)} measurements already in {OUT_CSV}")
@@ -323,7 +348,8 @@ def main() -> None:
         feeds = feed_paths(area)
         if feeds is None:
             continue
-        run_iduedu(existing, area, feeds, window, do_join=args.join)
+        if not args.only_peartree:
+            run_iduedu(existing, area, feeds, window, do_join=args.join)
         if args.peartree:
             run_peartree(existing, area, feeds, window)
 

@@ -10,9 +10,8 @@ Design goals (same as the v1 scripts, generalized):
 - Deterministic representation-size helpers for graph objects.
 """
 
-from __future__ import annotations
-
 import json
+import os
 import platform
 import time
 from dataclasses import dataclass
@@ -26,6 +25,12 @@ RESULTS_DIR = Path(__file__).resolve().parents[1] / "results"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PYROSM_CACHE_DIR = str(Path(__file__).resolve().parents[1] / "pbf_cache")
+
+#: Where the cityseer arm keeps its raw Overpass responses. cityseer has no cache
+#: of its own, so without this its measured build would include a network fetch on
+#: every attempt while IduEdu and OSMnx read theirs from disk -- the comparison
+#: would then be of our network link, not of the three libraries.
+CITYSEER_CACHE_DIR = Path(__file__).resolve().parents[1] / "cityseer_cache"
 
 
 # ----------------------------
@@ -520,6 +525,10 @@ def dump_environment(tag: str) -> None:
     info = {
         "tag": tag,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        # Which Overpass instance answered. Empty means the library default. A
+        # mirror serves the same planet with its own replication lag, so a table
+        # built from several stages should be able to say where its data came from.
+        "overpass_url": os.getenv("OVERPASS_URL", ""),
         "platform": platform.platform(),
         "processor": platform.processor(),
         "python": platform.python_version(),

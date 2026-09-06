@@ -52,7 +52,13 @@ def fmt_duration(seconds: float) -> str:
 def run_step(name: str, script: str, extra: list[str], *, smoke: bool, timeout: float | None) -> dict:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{name}.log"
-    cmd = [sys.executable, str(HERE / script), *extra]
+    # -X utf8 rather than PYTHONIOENCODING: that one only fixes stdio, and the
+    # failure it does not fix is a file write. cityseer caches its Overpass
+    # response with Path.write_text() and no encoding, so on a console-cp1251
+    # Windows the first Finnish street name with an "a-umlaut" ends the city's
+    # whole arm. Every other locale-encoded read or write in the stack is covered
+    # by the same switch.
+    cmd = [sys.executable, "-X", "utf8", str(HERE / script), *extra]
     if smoke:
         cmd.append("--smoke")
 
