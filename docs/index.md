@@ -90,7 +90,7 @@ M = od_matrix(
     gdf_origins=origins,
     gdf_destinations=destinations,
     weight="time_min",
-    threshold=30,  # pairs without a path or beyond 30 minutes are inf
+    cutoff=30,  # pairs without a path or beyond 30 minutes are inf
 )
 print(M.head())
 ```
@@ -98,12 +98,17 @@ print(M.head())
 ### 3) Reconstruct a route
 
 ```python
-from iduedu import path_to_edges, single_source_dijkstra_path
+from iduedu import path_to_edges
 
 nodes = G.nodes_gdf.index
-path = single_source_dijkstra_path(G, nodes[0], nodes[-1], weight="time_min")  # [] if unreachable
-route = path_to_edges(G, path)  # traversed edges in order, with geometry, type and time_min
+result = G.single_source_dijkstra(
+    nodes[0], target_nodes=[nodes[-1]], weight="time_min",
+    output="both", path_storage="lazy",
+)
+path = result.get_path(nodes[-1])  # None if unreachable; no second search
+route = path_to_edges(G, path or [])
 
+print(result.distances)
 print(route[["type", "length_meter", "time_min"]])
 ```
 

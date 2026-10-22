@@ -31,12 +31,17 @@ from .graph import (
     write_urban_graph,
 )
 from .graph.shortest_paths import (
+    ShortestPathResult,
+    dijkstra_parallel,
     dijkstra_path_length_parallel,
+    iter_od_matrix,
+    multi_source_dijkstra,
     multi_source_dijkstra_nearest_source,
     multi_source_dijkstra_path,
     multi_source_dijkstra_path_length,
     od_matrix,
     path_to_edges,
+    single_source_dijkstra,
     single_source_dijkstra_path,
     single_source_dijkstra_path_length,
 )
