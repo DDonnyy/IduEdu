@@ -140,6 +140,7 @@ exclude_lines = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "-p tests --cov-branch"
 markers = [
     "unit: fast tests that do not touch network or external services",
     "integration: tests that exercise several package layers together",
