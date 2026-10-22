@@ -143,16 +143,6 @@ def _overpass_request(
     last_err_text = None
     for attempt in range(max_retries + 1):
         try:
-            pause = _get_overpass_pause(overpass_url)
-        except RequestError as e:  # pragma: no cover
-            pause = 0
-            logger.debug(f"Overpass /status check failed: {e}")
-
-        if pause > 0:
-            logger.warning(f"Waiting {pause} seconds for available Overpass API slot")
-            time.sleep(pause)
-
-        try:
             resp = _overpass_http(method, overpass_url, params=params, data=data, timeout=timeout or config.timeout)
         except requests.RequestException as e:  # pragma: no cover
             last_err_text = str(e)
@@ -311,6 +301,46 @@ def _poly_to_overpass(poly: Polygon) -> str:
     return " ".join(f"{y} {x}" for x, y in poly.exterior.coords[:-1])
 
 
+#: Name of the marker element (``make section name=...``) that separates the
+#: stop-area members from the rest of a route response.
+STOP_AREA_MEMBERS_SECTION = "stop_area_members"
+
+
+def split_stop_area_members(elements: list) -> tuple[list, dict | None]:
+    """Split a route response into its route elements and its stop-area members.
+
+    Returns ``(elements_before_the_marker, member_payloads)``. ``member_payloads``
+    maps ``(type, id)`` to tags and coordinates, as :func:`fetch_member_tags`
+    returns them, or is ``None`` when the response carries no member section -- a
+    response cached before the section existed, or one without subway details.
+    """
+    for index, element in enumerate(elements):
+        if (
+            isinstance(element, dict)
+            and element.get("type") == "section"
+            and (element.get("tags") or {}).get("name") == STOP_AREA_MEMBERS_SECTION
+        ):
+            return list(elements[:index]), member_payloads(elements[index + 1 :])
+    return list(elements), None
+
+
+def member_payloads(elements: list) -> dict:
+    """Tags and coordinates of OSM elements, keyed by ``(type, id)``."""
+    result = {}
+    for e in elements or []:
+        if not isinstance(e, dict) or "id" not in e or e.get("type") not in {"node", "way", "relation"}:
+            continue
+        payload = {"tags": e.get("tags", {}) or {}}
+        if e.get("type") == "node" and ("lon" in e and "lat" in e):
+            payload["__latlon__"] = (e["lon"], e["lat"])
+        if e.get("type") != "node" and "center" in e:
+            payload["__center__"] = (e["center"]["lon"], e["center"]["lat"])
+        if "geometry" in e and e["geometry"]:
+            payload["__geometry__"] = e["geometry"]
+        result[(e["type"], int(e["id"]))] = payload
+    return result
+
+
 def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> list[dict]:
     """Download public-transport route elements intersecting a polygon."""
     public_transport_types = sorted(set(public_transport_types))
@@ -364,6 +394,7 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> l
             rel(bn.route_nodes)->.stop_areas;
             rel(br.stop_areas)["public_transport"="stop_area_group"]["type"="public_transport"]->.groups;
             nwr(r.stop_areas)["public_transport"="station"]->.stations;
+            nwr(r.stop_areas)->.stop_area_members;
             """.strip()
         )
 
@@ -372,10 +403,13 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> l
 
     if enable_subway_details:
         query_parts.append(
-            """
+            f"""
             .stop_areas out geom qt;
             .groups     out body qt;
             .stations   out tags qt;
+            make section name="{STOP_AREA_MEMBERS_SECTION}";
+            out;
+            .stop_area_members out center qt;
             """.strip()
         )
 
@@ -475,20 +509,4 @@ def fetch_member_tags(members_missing):
     else:
         logger.debug("Using cached fetch_member_tags")
 
-    result = {}
-    for e in json_root.get("elements", []) or []:
-        key = (e["type"], int(e["id"]))
-        payload = {"tags": e.get("tags", {}) or {}}
-
-        if e.get("type") == "node" and ("lon" in e and "lat" in e):
-            payload["__latlon__"] = (e["lon"], e["lat"])
-
-        if e.get("type") != "node" and "center" in e:
-            payload["__center__"] = (e["center"]["lon"], e["center"]["lat"])
-
-        if "geometry" in e and e["geometry"]:
-            payload["__geometry__"] = e["geometry"]
-
-        result[key] = payload
-
-    return result
+    return member_payloads(json_root.get("elements", []))

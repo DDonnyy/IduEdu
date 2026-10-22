@@ -14,6 +14,7 @@ from iduedu.graph.urban_graph import UrbanGraph
 from iduedu.overpass.downloaders import (
     get_4326_boundary,
     get_routes_by_poly,
+    split_stop_area_members,
 )
 from iduedu.overpass.parsers import (
     overpass_ground_transport2edgenode,
@@ -402,6 +403,9 @@ def _build_public_transport_graph(
     ptts = ", ".join(transport_types)
     logger.info(f"Downloading routes via Overpass with types {ptts} ...")
     overpass_response: list[dict] = get_routes_by_poly(polygon, transport_types)
+    # Stop-area members arrive in the same response, after a marker; separate them
+    # so the route parser never sees them and the subway parser need not ask again.
+    overpass_response, stop_area_members = split_stop_area_members(overpass_response)
     overpass_data = overpass_routes_to_df(overpass_response, enable_subway_details=expect_subway)
 
     if overpass_data.shape[0] == 0:
@@ -464,7 +468,9 @@ def _build_public_transport_graph(
     if expect_subway:
         subway_data = overpass_data[overpass_data["transport_type"] == "subway"].copy()
         if len(subway_data) > 0:
-            subway_edges, subway_nodes = overpass_subway2edgenode(subway_data, local_crs)
+            subway_edges, subway_nodes = overpass_subway2edgenode(
+                subway_data, local_crs, known_members=stop_area_members
+            )
             if len(subway_edges) > 0:
                 graph_edges_gdf.append(subway_edges.dropna(axis=1, how="all"))
             if len(subway_nodes) > 0:
