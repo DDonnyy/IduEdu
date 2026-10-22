@@ -8,7 +8,7 @@ Never bump the version or create a tag by hand.
 
 ## Requirements
 
-- Python 3.11 or 3.12
+- Python 3.11 through 3.14
 - [uv](https://docs.astral.sh/uv/) (package manager; `uv.lock` is generated locally and is not committed)
 - `make` (optional but every command below has a `make` shortcut)
 
