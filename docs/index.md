@@ -13,6 +13,7 @@ GTFS public transport <api/gtfs>
 Graph utilities <api/utilities>
 Matrices <api/matrices>
 Overpass helpers <api/overpass>
+Local OSM files <api/osm_pbf>
 Examples <examples/index>
 ```
 # **IduEdu** is an open-source Python library for building and analyzing multimodal city networks from [OpenStreetMap](https://www.openstreetmap.org) and GTFS Schedule feeds.
@@ -59,7 +60,8 @@ pip install iduedu
 ```
 
 > Supports Python 3.11 through 3.14 and the geospatial stack (GeoPandas, Shapely, PyProj, NumPy, Pandas, SciPy,
-> Numba). Install `iduedu[io]` to read and write `.urbangraph` archives. NetworkX is not installed with
+> Numba). Install `iduedu[io]` to read and write `.urbangraph` archives, and `iduedu[pbf]` to read OSM data from
+> local `.osm.pbf` files instead of Overpass (see [Configuration](configuration.md)). NetworkX is not installed with
 > IduEdu; install it separately to use the optional NetworkX helpers.
 
 ---

@@ -12,8 +12,10 @@ from iduedu.constants.transport_specs import DEFAULT_REGISTRY, TransportRegistry
 from iduedu.graph.transformers import estimate_crs_for_bounds
 from iduedu.graph.urban_graph import UrbanGraph
 from iduedu.overpass.downloaders import (
+    active_overpass_date,
     get_4326_boundary,
     get_routes_by_poly,
+    osm_source_label,
     split_stop_area_members,
 )
 from iduedu.overpass.parsers import (
@@ -367,7 +369,8 @@ def _build_public_transport_graph(
 
     Pipeline:
       1) Resolve a boundary polygon (EPSG:4326) from ``osm_id`` and/or ``territory``.
-      2) Download PT routes via Overpass for the requested ``transport_types``.
+      2) Download PT routes via Overpass (or read them from the local OSM file in pbf mode) for the requested
+         ``transport_types``.
       3) Optionally (subway) parse station/stop-area context (entrances, exits, transfers).
       4) Parse each route into node/edge tables (parallelized for large inputs).
       5) Assemble a single ``UrbanGraph`` and compute missing edge ``length_meter`` and ``time_min`` using
@@ -397,11 +400,11 @@ def _build_public_transport_graph(
 
     # Subway parsing expects station information in the response.
     expect_subway = False
-    if "subway" in transport_types and config.overpass_date is None:
+    if "subway" in transport_types and active_overpass_date() is None:
         expect_subway = True
 
     ptts = ", ".join(transport_types)
-    logger.info(f"Downloading routes via Overpass with types {ptts} ...")
+    logger.info(f"Downloading routes via {osm_source_label()} with types {ptts} ...")
     overpass_response: list[dict] = get_routes_by_poly(polygon, transport_types)
     # Stop-area members arrive in the same response, after a marker; separate them
     # so the route parser never sees them and the subway parser need not ask again.

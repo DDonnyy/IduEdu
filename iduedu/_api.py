@@ -50,6 +50,7 @@ from .graph_builders.gtfs_builders import get_gtfs_public_transport_graph
 from .graph_builders.intermodal_builders import get_intermodal_graph, join_pt_walk_graph
 from .graph_builders.public_transport_builders import get_public_transport_graph
 from .gtfs.merge import deduplicate_across_feeds, merge_gtfs_feeds
+from .osm_pbf import PbfSource, snapshot_time, split_by_polygons
 from .overpass.downloaders import get_4326_boundary
 
 

@@ -83,6 +83,10 @@ compatibility helpers.
 
 Use `pip install "iduedu[io]"` to enable `.urbangraph` parquet archive read/write helpers.
 
+Use `pip install "iduedu[pbf]"` to build the same OSM graphs offline from local `.osm.pbf` extracts (for example
+Geofabrik downloads) instead of the Overpass API; see the
+[configuration guide](https://iduclub.github.io/IduEdu/configuration.html).
+
 ## Quickstart
 
 ### Build an intermodal graph

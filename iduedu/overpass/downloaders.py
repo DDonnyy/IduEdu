@@ -49,6 +49,39 @@ OVERPASS_MIN_INTERVAL = config.overpass_min_interval
 OVERPASS_RL = RateLimiter(OVERPASS_MIN_INTERVAL)
 
 
+def using_pbf() -> bool:
+    """True when ``config.osm_source`` is ``"pbf"``: queries are answered from a local OSM file."""
+    return config.osm_source == "pbf"
+
+
+def osm_source_label() -> str:
+    """Human-readable name of the active OSM data source, for log messages."""
+    if using_pbf():
+        return f"PBF file {config.pbf_path}"
+    return "Overpass"
+
+
+def active_overpass_date() -> str | None:
+    """The Overpass snapshot date in effect: ``config.overpass_date``, or ``None`` in pbf mode,
+    where the file itself is the snapshot."""
+    if using_pbf():
+        return None
+    return config.overpass_date
+
+
+def _pbf_source():
+    """The :class:`~iduedu.osm_pbf.PbfSource` for ``config.pbf_path``."""
+    if not config.pbf_path:
+        raise ValueError("config.osm_source is 'pbf' but config.pbf_path is not set; use config.set_osm_source")
+    try:
+        from iduedu.osm_pbf.reader import PbfSource  # pylint: disable=import-outside-toplevel
+    except ModuleNotFoundError as exc:  # pragma: no cover - the reader soft-imports osmium itself
+        if exc.name != "osmium":
+            raise
+        raise ImportError("osm_source='pbf' needs pyosmium. Install it with: pip install 'iduedu[pbf]'") from exc
+    return PbfSource(config.pbf_path)
+
+
 def _overpass_http(
     method: Literal["GET", "POST"], url: str, *, params=None, data=None, timeout=None
 ) -> requests.Response:
@@ -201,7 +234,14 @@ def _overpass_request(
 
 
 def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
-    """Download an OSM relation boundary and convert it to a Shapely geometry."""
+    """Download an OSM relation boundary and convert it to a Shapely geometry.
+
+    In pbf mode (``config.osm_source == "pbf"``) the relation is read from ``config.pbf_path``.
+    """
+    if using_pbf():
+        logger.debug(f"Reading territory bounds with osm_id <{osm_id}> from {osm_source_label()} ...")
+        return _boundary_from_elements(_pbf_source().boundary(osm_id))
+
     header = config.overpass_header
     overpass_query = f"""
                     {header}
@@ -222,8 +262,12 @@ def get_boundary_by_osm_id(osm_id) -> MultiPolygon | Polygon:
         cache_save_async("boundary", cache_key_src, json_result)
     else:
         logger.debug(f"Using cached territory bounds with osm_id <{osm_id}>")
+    return _boundary_from_elements(json_result["elements"])
+
+
+def _boundary_from_elements(elements: list) -> MultiPolygon | Polygon:
     geoms = []
-    for element in json_result["elements"]:
+    for element in elements:
         geometries_inners = []
         geometries_outers = []
         for member in element["members"]:
@@ -253,7 +297,8 @@ def get_4326_boundary(
     For `MultiPolygon`, the function returns its **convex hull** as a Polygon.
 
     Parameters:
-        osm_id (int | None): OSM relation id. If provided, boundary is fetched via Overpass.
+        osm_id (int | None): OSM relation id. If provided, boundary is fetched via Overpass (or read from
+            the local OSM file in pbf mode, see ``config.set_osm_source``).
         territory (Polygon | MultiPolygon | gpd.GeoDataFrame | gpd.GeoSeries | None): Existing boundary geometry
             or a GeoDataFrame containing it. If GeoDataFrame is given, it is reprojected to 4326
             and unioned (`.union_all()`).
@@ -342,11 +387,18 @@ def member_payloads(elements: list) -> dict:
 
 
 def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> list[dict]:
-    """Download public-transport route elements intersecting a polygon."""
+    """Download public-transport route elements intersecting a polygon.
+
+    In pbf mode the same elements are read from ``config.pbf_path`` (see :class:`~iduedu.osm_pbf.PbfSource`).
+    """
     public_transport_types = sorted(set(public_transport_types))
 
     if not public_transport_types:
         return pd.DataFrame()
+
+    if using_pbf():
+        logger.info(f"Reading routes with types {public_transport_types} from {osm_source_label()} ...")
+        return _pbf_source().routes_by_poly(polygon, public_transport_types)
 
     has_subway = "subway" in public_transport_types
     non_subway_types = [t for t in public_transport_types if t != "subway"]
@@ -435,7 +487,16 @@ def get_routes_by_poly(polygon: Polygon, public_transport_types: list[str]) -> l
 
 
 def get_network_by_filters(polygon: Polygon, way_filter: str) -> pd.DataFrame:
-    """Download OSM way elements matching an Overpass filter inside a polygon."""
+    """Download OSM way elements matching an Overpass filter inside a polygon.
+
+    In pbf mode the ways are read from ``config.pbf_path`` with the same filter and ``poly:`` semantics.
+    """
+    if using_pbf():
+        logger.debug(f"Reading network with filters <{way_filter}> from {osm_source_label()} ...")
+        elements = _pbf_source().ways_by_filter(polygon, way_filter)
+        logger.info("Network successfully read!")
+        return pd.DataFrame(elements)
+
     polygon_coords = _poly_to_overpass(polygon)
     header = config.overpass_header
     overpass_query = f"""
@@ -483,6 +544,9 @@ def fetch_member_tags(members_missing):
 
     if not any(ids.values()):
         return {}
+
+    if using_pbf():
+        return _pbf_source().member_tags([{"type": t, "ref": ref} for t, refs in ids.items() for ref in refs])
 
     def _build_query(all_ids: dict) -> str:
         parts = []
